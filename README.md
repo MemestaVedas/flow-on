@@ -49,6 +49,23 @@ cmake --build build --config Release
 .\build.ps1 -CUDA
 ```
 
+### Push to GitHub
+
+Use the included helper script for easy setup:
+
+```powershell
+# Interactive setup (recommended)
+.\setup-github.ps1
+
+# Or with existing repository
+.\setup-github.ps1 -RepoUrl "https://github.com/yourusername/flow-on.git"
+
+# Or create new repo with GitHub CLI
+.\setup-github.ps1 -CreateRepo
+```
+
+**CI/CD Included:** GitHub Actions workflow automatically builds Debug + Release on every push (see [`.github/workflows/build.yml`](.github/workflows/build.yml))
+
 ## Architecture
 
 ### Phases 1–10 (Complete Implementation)

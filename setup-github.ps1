@@ -55,7 +55,7 @@ Write-Host ""
 # Check git status
 $status = git status --porcelain
 if ($status) {
-    Write-Host "⚠️  Warning: You have uncommitted changes:" -ForegroundColor Yellow
+    Write-Host "Warning: You have uncommitted changes:" -ForegroundColor Yellow
     git status --short
     Write-Host ""
     $continue = Read-Host "Continue anyway? (y/N)"
@@ -68,7 +68,7 @@ if ($status) {
 # Check if remote already exists
 $existingRemote = git remote get-url origin 2>$null
 if ($existingRemote) {
-    Write-Host "✓ Remote 'origin' already configured:" -ForegroundColor Green
+    Write-Host "Remote 'origin' already configured:" -ForegroundColor Green
     Write-Host "  $existingRemote"
     Write-Host ""
     $overwrite = Read-Host "Overwrite existing remote? (y/N)"
@@ -117,7 +117,7 @@ if ($CreateRepo) {
         exit 1
     }
     
-    Write-Host "✓ Repository created successfully!" -ForegroundColor Green
+    Write-Host "Repository created successfully!" -ForegroundColor Green
     $RepoUrl = (git remote get-url origin)
 }
 
@@ -133,7 +133,7 @@ if ($RepoUrl) {
         exit 1
     }
     
-    Write-Host "✓ Remote added successfully!" -ForegroundColor Green
+    Write-Host "Remote added successfully!" -ForegroundColor Green
 }
 
 # If no options provided, prompt user
@@ -152,7 +152,7 @@ if (-not $CreateRepo -and -not $RepoUrl) {
             $RepoUrl = Read-Host "Enter repository URL (e.g., https://github.com/username/flow-on.git)"
             if ($RepoUrl) {
                 git remote add origin $RepoUrl
-                Write-Host "✓ Remote added!" -ForegroundColor Green
+                Write-Host "Remote added!" -ForegroundColor Green
             } else {
                 Write-Host "Error: Invalid URL." -ForegroundColor Red
                 exit 1
@@ -185,9 +185,9 @@ Write-Host "[2/3] Renaming branch to 'main'..." -ForegroundColor Cyan
 $currentBranch = git branch --show-current
 if ($currentBranch -ne "main") {
     git branch -M main
-    Write-Host "✓ Branch renamed: $currentBranch → main" -ForegroundColor Green
+    Write-Host "Branch renamed: $currentBranch -> main" -ForegroundColor Green
 } else {
-    Write-Host "✓ Already on 'main' branch" -ForegroundColor Green
+    Write-Host "Already on 'main' branch" -ForegroundColor Green
 }
 
 # Push to GitHub
@@ -208,9 +208,9 @@ git push -u origin main
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host ""
-    Write-Host "════════════════════════════════════════" -ForegroundColor Green
-    Write-Host "  ✓ Successfully pushed to GitHub!" -ForegroundColor Green
-    Write-Host "════════════════════════════════════════" -ForegroundColor Green
+    Write-Host "========================================" -ForegroundColor Green
+    Write-Host "  Successfully pushed to GitHub!" -ForegroundColor Green
+    Write-Host "========================================" -ForegroundColor Green
     Write-Host ""
     
     $repoUrl = git remote get-url origin
