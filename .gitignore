@@ -1,0 +1,91 @@
+# Git ignore file for FLOW-ON!
+
+# ============================================================================
+# Build artifacts and output
+# ============================================================================
+build/
+bin/
+x64/
+flow-on/
+*.exe
+*.dll
+*.lib
+*.obj
+*.o
+*.a
+*.so
+*.dylib
+*.pdb
+*.ilk
+
+# ============================================================================
+# IDE and editor artifacts
+# ============================================================================
+.vs/
+.vscode/
+*.user
+*.filters
+*.VC.dblocal
+.clang-format
+.editorconfig
+CMakeUserPresets.json
+cmake_install.cmake
+CMakeCache.txt
+Makefile
+
+# ============================================================================
+# Temporary and system files
+# ============================================================================
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*.bak
+*.tmp
+*.temp
+.directory
+
+# ============================================================================
+# Python artifacts (from build.ps1 and various scripts)
+# ============================================================================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.egg-info/
+dist/
+build_python/
+
+# ============================================================================
+# Large external files (users download these during build/setup)
+# ============================================================================
+models/ggml-tiny.en.bin
+models/*.bin
+redist/WindowsAppRuntimeInstall-x64.exe
+
+# ============================================================================
+# Old Visual Studio project template (superseded by CMake)
+# ============================================================================
+# Keep only new files; ignore template-generated artifacts
+flow-on.cpp.bak
+flow-on.h.bak
+
+# ============================================================================
+# Logs
+# ============================================================================
+*.log
+CMakeOutput.log
+CMakeError.log
+
+# ============================================================================
+# Environment and local configuration
+# ============================================================================
+.env
+.env.local
+*.local
+
+# Keep these files (whitelisting)
+# !models/README.txt
+# !redist/README.txt

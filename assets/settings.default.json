@@ -1,0 +1,15 @@
+{
+  "hotkey": "Alt+V",
+  "mode": "auto",
+  "model": "tiny.en",
+  "use_gpu": true,
+  "start_with_windows": true,
+  "snippets": {
+    "insert email": "you@yourdomain.com",
+    "insert boilerplate": "import React, { useState, useEffect } from 'react';\n\nexport default function Component() {\n  return <div></div>;\n}",
+    "insert todo": "// TODO: ",
+    "insert fixme": "// FIXME: ",
+    "insert date": "2026-02-27",
+    "insert github": "https://github.com/YourHandle"
+  }
+}
