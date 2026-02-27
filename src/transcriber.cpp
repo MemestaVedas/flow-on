@@ -39,12 +39,21 @@ bool Transcriber::transcribeAsync(HWND hwnd, std::vector<float> pcm, UINT doneMs
 
         whisper_full_params p = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
 
-        // Use n-1 logical cores; leave one free for the UI/audio threads.
+        // Use all available logical cores for maximum speed
         const int hw = static_cast<int>(std::thread::hardware_concurrency());
-        p.n_threads   = std::max(1, hw - 1);
+        p.n_threads   = std::max(1, hw);  // Use ALL cores for transcription
         p.language    = "en";
         p.translate   = false;
         p.no_context  = true;
+
+        // === SPEED OPTIMIZATIONS ===
+        p.single_segment   = true;   // Process as single segment (faster for dictation)
+        p.no_timestamps    = true;   // Skip timestamp generation (not needed, saves compute)
+        p.token_timestamps = false;  // Skip token-level timestamps (not needed)
+        p.audio_ctx        = 512;    // Reduce audio context (default 1500, lower = faster)
+        p.max_len          = 0;      // No character limit (0 = unlimited)
+        p.print_progress   = false;  // Disable progress prints (slight overhead)
+        p.print_realtime   = false;  // Disable realtime prints
 
         // Seed the decoder with tech vocabulary — meaningfully improves
         // accuracy for developer dictation (camelCase, function names, etc.)
