@@ -87,6 +87,25 @@ add_custom_command(TARGET flow-on POST_BUILD
 )
 
 # --------------------------------------------------------------------------
+# Post-build: copy whisper.cpp DLL files to executable directory
+# --------------------------------------------------------------------------
+add_custom_command(TARGET flow-on POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:whisper>"
+        "$<TARGET_FILE_DIR:flow-on>"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:ggml>"
+        "$<TARGET_FILE_DIR:flow-on>"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:ggml-base>"
+        "$<TARGET_FILE_DIR:flow-on>"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:ggml-cpu>"
+        "$<TARGET_FILE_DIR:flow-on>"
+    COMMENT "Copying Whisper DLL dependencies to executable directory"
+)
+
+# --------------------------------------------------------------------------
 # IDE source grouping for Visual Studio Solution Explorer
 # --------------------------------------------------------------------------
 source_group("Source Files"  REGULAR_EXPRESSION "src/.*\\.cpp")
