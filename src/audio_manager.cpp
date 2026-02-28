@@ -104,7 +104,10 @@ std::vector<float> AudioManager::drainBuffer()
     float s;
     while (g_ring.try_dequeue(s))
         m_recordBuffer.push_back(s);
-    return m_recordBuffer;
+    // Move instead of copy — avoids duplicating up to 1.9 MB of PCM
+    std::vector<float> out = std::move(m_recordBuffer);
+    m_recordBuffer.reserve(16000 * 30);   // re-allocate for next session
+    return out;
 }
 
 void AudioManager::shutdown()

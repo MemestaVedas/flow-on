@@ -5,13 +5,21 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # --------------------------------------------------------------------------
-# Compiler flags
-# /O2 /fp:fast are incompatible with /RTC1 (Debug runtime checks), so they
-# are scoped to Release only.  /arch:AVX2 is always on — Whisper requires it.
+# Compiler flags — Release: maximum speed; Debug: debuggable but still decent
 # --------------------------------------------------------------------------
 add_compile_options(/arch:AVX2 /W3)
+
+# Release: aggressive optimisation chain
 add_compile_options("$<$<CONFIG:Release>:/O2>")
+add_compile_options("$<$<CONFIG:Release>:/Oi>")
+add_compile_options("$<$<CONFIG:Release>:/Ot>")
 add_compile_options("$<$<CONFIG:Release>:/fp:fast>")
+add_compile_options("$<$<CONFIG:Release>:/GL>")
+add_link_options("$<$<CONFIG:Release>:/LTCG>")
+
+# Debug: keep /Od but still allow vectorisation
+add_compile_options("$<$<CONFIG:Debug>:/fp:fast>")
+
 add_compile_definitions(
     WIN32_LEAN_AND_MEAN
     NOMINMAX
@@ -26,7 +34,18 @@ set(WHISPER_AVX2           ON  CACHE BOOL "" FORCE)
 set(WHISPER_F16C           ON  CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-# Uncomment next two lines for NVIDIA GPU acceleration (requires CUDA Toolkit):
+
+# Enable OpenMP so whisper.cpp matrix ops run on ALL cores
+set(GGML_OPENMP            ON  CACHE BOOL "" FORCE)
+
+# Native optimisation: auto-detect AVX2 / FMA / SSE4.2
+set(GGML_NATIVE            ON  CACHE BOOL "" FORCE)
+set(GGML_FMA               ON  CACHE BOOL "" FORCE)
+
+# Flash attention — reduces memory traffic, faster on long sequences
+set(WHISPER_FLASH_ATTN     ON  CACHE BOOL "" FORCE)
+
+# Uncomment next two lines for NVIDIA CUDA acceleration (5-10x faster):
 # set(WHISPER_CUBLAS ON CACHE BOOL "" FORCE)
 # set(GGML_CUDA      ON CACHE BOOL "" FORCE)
 add_subdirectory(external/whisper.cpp)
