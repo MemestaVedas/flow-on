@@ -79,6 +79,9 @@ flow-on.h.bak
 CMakeOutput.log
 CMakeError.log
 
+# Submodule artifacts
+external/whisper.cpp/bindings/java/bin/
+
 # ============================================================================
 # Environment and local configuration
 # ============================================================================

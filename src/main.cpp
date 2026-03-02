@@ -275,8 +275,22 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
     // ----------------------------------------------------------
     // Transcription complete — format, expand snippets, inject
+    // Use a static to prevent duplicate processing of the same message
     // ----------------------------------------------------------
     case WM_TRANSCRIPTION_DONE: {
+        static std::atomic<uint64_t> s_lastProcessedTime{0};
+        const uint64_t tickNow = GetTickCount64();
+        const uint64_t last = s_lastProcessedTime.load(std::memory_order_acquire);
+        
+        // Ignore duplicate messages within 500ms (shouldn't happen but guard anyway)
+        if (tickNow - last < 500) {
+            OutputDebugStringA("FLOW-ON: Ignoring duplicate WM_TRANSCRIPTION_DONE within 500ms\n");
+            auto* rawPtr = reinterpret_cast<std::string*>(lp);
+            delete rawPtr;  // must still delete to avoid leak
+            break;
+        }
+        s_lastProcessedTime.store(tickNow, std::memory_order_release);
+        
         auto* rawPtr = reinterpret_cast<std::string*>(lp);
         std::string raw = rawPtr ? *rawPtr : "";
         delete rawPtr;
