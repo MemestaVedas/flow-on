@@ -138,7 +138,7 @@ static std::string GetModelPath()
     wchar_t* lastSlash = wcsrchr(exeDir, L'\\');
     if (lastSlash) *(lastSlash + 1) = L'\0';
 
-    std::wstring model = std::wstring(exeDir) + L"models\\ggml-tiny.en.bin";
+    std::wstring model = std::wstring(exeDir) + L"models\\ggml-base.en.bin";
     // Convert to narrow string (ASCII-safe path)
     return std::string(model.begin(), model.end());
 }
@@ -476,10 +476,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
         MessageBoxW(nullptr,
             L"Failed to load Whisper model.\n\n"
             L"Expected location:\n"
-            L"  <exe-dir>\\models\\ggml-tiny.en.bin\n\n"
+            L"  <exe-dir>\\models\\ggml-base.en.bin\n\n"
             L"Download it with:\n"
-            L"  external\\whisper.cpp\\models\\download-ggml-model.cmd tiny.en",
-            L"FLOW-ON! \u2014 Model Not Found", MB_ICONERROR);
+            L"  external\\whisper.cpp\\models\\download-ggml-model.cmd base.en",
+            L"FLOW-ON! — Model Not Found", MB_ICONERROR);
         Shell_NotifyIconW(NIM_DELETE, &g_nid);
         g_audio.shutdown();
         g_overlay.shutdown();

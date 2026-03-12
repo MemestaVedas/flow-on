@@ -5,44 +5,167 @@
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <sstream>
+#include <vector>
 #include <windows.h>
 #include <cstdio>
 
 // ------------------------------------------------------------------
 // Remove hallucinated repetitions from Whisper output.
-// Whisper's tiny model sometimes repeats the same phrase N times when
-// it gets stuck in a greedy-decode loop. This detects the shortest
-// repeating unit (length 4+ chars) and returns only one copy.
+// Whisper models sometimes get stuck in repetition loops. This detects
+// and collapses repeated phrases at word, phrase, and character levels.
 // ------------------------------------------------------------------
 static std::string removeRepetitions(const std::string& text)
 {
-    const int n = static_cast<int>(text.size());
-    if (n < 8) return text;  // too short to have meaningful repetitions
+    if (text.size() < 10) return text;
 
-    // Try every possible repeating-unit length from small to large
-    for (int unitLen = 4; unitLen <= n / 2; ++unitLen) {
-        const std::string unit = text.substr(0, unitLen);
-        // Check if the entire string (or nearly all of it) is just this unit repeated
-        int pos = 0;
-        int reps = 0;
-        while (pos + unitLen <= n) {
-            if (text.substr(pos, unitLen) == unit) {
-                ++reps;
-                pos += unitLen;
-            } else {
-                break;
+    std::string result = text;
+    bool changed = true;
+    int iterations = 0;
+    const int MAX_ITERATIONS = 5;
+
+    while (changed && iterations < MAX_ITERATIONS) {
+        changed = false;
+        iterations++;
+
+        // Strategy 1: Detect exact word-level repetitions (3+ times)
+        // Example: "hello hello hello" -> "hello"
+        {
+            std::vector<std::string> words;
+            std::istringstream iss(result);
+            std::string word;
+            while (iss >> word) words.push_back(word);
+
+            if (words.size() >= 6) {
+                for (size_t i = 0; i < words.size() - 2; i++) {
+                    // Check for 3+ identical consecutive words
+                    if (words[i] == words[i+1] && words[i] == words[i+2]) {
+                        size_t repeatEnd = i + 3;
+                        while (repeatEnd < words.size() && words[repeatEnd] == words[i]) repeatEnd++;
+                        // Collapse to single occurrence
+                        words.erase(words.begin() + i + 1, words.begin() + repeatEnd);
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+
+            if (changed) {
+                result.clear();
+                for (size_t i = 0; i < words.size(); i++) {
+                    if (i > 0) result += " ";
+                    result += words[i];
+                }
+                continue;
             }
         }
-        // If 3+ repetitions detected, the remainder is ≤ 1 unit (partial)
-        // → collapse to a single occurrence
-        if (reps >= 3 && pos >= n - unitLen) {
-            // Trim trailing space from the unit before returning
-            std::string clean = unit;
-            while (!clean.empty() && clean.back() == ' ') clean.pop_back();
-            return clean;
+
+        // Strategy 2: Detect phrase-level repetitions (2+ times)
+        // Example: "at the finger at the finger" -> "at the finger"
+        {
+            std::vector<std::string> words;
+            std::istringstream iss(result);
+            std::string word;
+            while (iss >> word) words.push_back(word);
+
+            for (size_t phraseLen = 2; phraseLen <= words.size() / 2 && phraseLen <= 8; phraseLen++) {
+                for (size_t i = 0; i <= words.size() - phraseLen * 2; i++) {
+                    bool match = true;
+                    for (size_t j = 0; j < phraseLen && match; j++) {
+                        if (words[i + j] != words[i + phraseLen + j]) match = false;
+                    }
+                    if (match) {
+                        // Found repeated phrase, collapse to single
+                        words.erase(words.begin() + i + phraseLen, words.begin() + i + phraseLen * 2);
+                        changed = true;
+                        break;
+                    }
+                }
+                if (changed) break;
+            }
+
+            if (changed) {
+                result.clear();
+                for (size_t i = 0; i < words.size(); i++) {
+                    if (i > 0) result += " ";
+                    result += words[i];
+                }
+                continue;
+            }
+        }
+
+        // Strategy 3: Detect substring repetitions at character level
+        // Example: "the finger the finger the finger" -> "the finger"
+        {
+            const int n = static_cast<int>(result.size());
+            for (int unitLen = 5; unitLen <= n / 2 && unitLen <= 50; ++unitLen) {
+                for (int start = 0; start <= n - unitLen * 2; ++start) {
+                    std::string unit = result.substr(start, unitLen);
+                    // Trim trailing space for comparison
+                    while (!unit.empty() && unit.back() == ' ') unit.pop_back();
+                    if (unit.size() < 4) continue;
+
+                    int pos = start;
+                    int reps = 0;
+                    while (pos + static_cast<int>(unit.size()) <= n) {
+                        std::string candidate = result.substr(pos, unit.size());
+                        while (!candidate.empty() && candidate.back() == ' ') candidate.pop_back();
+                        if (candidate == unit) {
+                            reps++;
+                            pos += unit.size();
+                            // Skip whitespace
+                            while (pos < n && result[pos] == ' ') pos++;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    if (reps >= 2) {
+                        // Remove repetitions, keep first occurrence
+                        int removeStart = start + unit.size();
+                        while (removeStart < n && result[removeStart] == ' ') removeStart++;
+                        int removeEnd = pos;
+                        result.erase(removeStart, removeEnd - removeStart);
+                        changed = true;
+                        break;
+                    }
+                }
+                if (changed) break;
+            }
         }
     }
-    return text;
+
+    // Final cleanup: remove excessive trailing repetitions of short words
+    {
+        std::vector<std::string> words;
+        std::istringstream iss(result);
+        std::string word;
+        while (iss >> word) words.push_back(word);
+
+        // Remove trailing single-character words or very short repeated endings
+        while (words.size() > 3) {
+            const std::string& last = words.back();
+            const std::string& prev = words[words.size() - 2];
+            
+            // Remove if last word is very short and repeats previous
+            if (last.size() <= 2 && last == prev) {
+                words.pop_back();
+            }
+            // Remove nonsensical trailing fragments
+            else if (last.size() <= 2 && words.size() > 5) {
+                words.pop_back();
+            }
+            else break;
+        }
+
+        result.clear();
+        for (size_t i = 0; i < words.size(); i++) {
+            if (i > 0) result += " ";
+            result += words[i];
+        }
+    }
+
+    return result;
 }
 
 // ------------------------------------------------------------------
@@ -160,20 +283,19 @@ bool Transcriber::transcribeAsync(HWND hwnd, std::vector<float> pcm, UINT doneMs
         p.print_timestamps = false;
 
         // -- Audio context: scale with actual audio length --
-        // Short clips (<5s) need less context; longer clips get more.
-        // Optimized: use even smaller contexts for very short clips to maximize speed
+        // With base.en model, we can use more context for better accuracy
         const float durationSec = static_cast<float>(pcm.size()) / 16000.0f;
-        if      (durationSec < 2.0f)  p.audio_ctx = 64;   // Ultra-fast for short commands
-        else if (durationSec < 5.0f)  p.audio_ctx = 128;  // Fast for brief dictation
-        else if (durationSec < 10.0f) p.audio_ctx = 256;  // Balanced for medium clips
-        else if (durationSec < 20.0f) p.audio_ctx = 384;  // Standard for longer clips
-        else                          p.audio_ctx = 512;  // Max context for long audio
+        if      (durationSec < 3.0f)  p.audio_ctx = 256;   // Good quality for short clips
+        else if (durationSec < 8.0f)  p.audio_ctx = 384;   // Better context for medium
+        else if (durationSec < 15.0f) p.audio_ctx = 512;   // Standard for longer clips
+        else if (durationSec < 30.0f) p.audio_ctx = 1024;  // More context for long audio
+        else                          p.audio_ctx = 1500;  // Max context for very long
 
-        // -- Decoding: single candidate, no fallback re-decode --
-        p.greedy.best_of    = 1;     // 1 candidate instead of default 5 → ~5x faster decode
+        // -- Decoding: use best_of=3 for better quality with base model --
+        p.greedy.best_of    = 3;     // 3 candidates for better accuracy (was 1)
         p.temperature       = 0.0f;  // start greedy
-        p.temperature_inc   = 0.2f;  // re-enable fallback: retries with sampling if repetition detected
-        p.entropy_thold     = 2.0f;  // tighter: catch repetitive outputs earlier
+        p.temperature_inc   = 0.4f;  // higher increment for better fallback
+        p.entropy_thold     = 2.4f;  // slightly relaxed for base model
         p.logprob_thold     = -1.0f;
         p.no_speech_thold   = 0.6f;
 

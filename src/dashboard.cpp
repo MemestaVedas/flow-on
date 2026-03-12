@@ -240,10 +240,10 @@ bool ModernDashboard::createResources()
             DWRITE_FONT_STRETCH_NORMAL, 13.0f, L"en-US", &m_fontMono);
     }
 
-    // Create render target
+    // Create render target — use IGNORE alpha for GDI DC render target (prevents transparency)
     D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(
         D2D1_RENDER_TARGET_TYPE_DEFAULT,
-        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE),
         96.0f, 96.0f);
 
     return SUCCEEDED(m_d2dFactory->CreateDCRenderTarget(&props, &m_dcRT));
@@ -290,7 +290,7 @@ bool ModernDashboard::init(HINSTANCE hInst, Dashboard* dashboard)
 
     // Create window with dark title bar
     m_hwnd = CreateWindowExW(
-        WS_EX_APPWINDOW | WS_EX_NOREDIRECTIONBITMAP,
+        WS_EX_APPWINDOW,
         L"FLOWON_DASHBOARD_V2", L"FLOW-ON! Dashboard",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX,
         x, y, m_winW, m_winH,

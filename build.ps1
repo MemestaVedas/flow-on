@@ -19,12 +19,12 @@ $cfg = if ($Release -or $Installer) { "Release" } else { "Debug" }
 Write-Host "=== FLOW-ON! Build ($cfg) ===" -ForegroundColor Cyan
 
 # 1. Download model if missing
-$modelPath = "models\ggml-tiny.en.bin"
+$modelPath = "models\ggml-base.en.bin"
 if (-not (Test-Path $modelPath)) {
-    Write-Host "[1/4] Downloading Whisper tiny.en model (~75 MB)..." -ForegroundColor Yellow
+    Write-Host "[1/4] Downloading Whisper base.en model (~150 MB)..." -ForegroundColor Yellow
     New-Item -ItemType Directory -Force models | Out-Null
     Invoke-WebRequest `
-        -Uri "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin" `
+        -Uri "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin" `
         -OutFile $modelPath `
         -UseBasicParsing
 } else {
@@ -37,6 +37,12 @@ if (-not (Test-Path "assets\app_icon.ico")) {
     pwsh assets\generate_icons.ps1
 } else {
     Write-Host "[2/4] Icons already present." -ForegroundColor Green
+}
+
+# Ensure VS cmake is on PATH (takes priority over Strawberry Perl cmake)
+$vsCmake = "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin"
+if (Test-Path $vsCmake) {
+    $env:PATH = "$vsCmake;" + $env:PATH
 }
 
 # 3. CMake configure + build
