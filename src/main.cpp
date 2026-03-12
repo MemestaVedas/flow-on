@@ -335,6 +335,18 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             swprintf_s(ts, L"%02d:%02d", st.wHour, st.wMinute);
             entry.timestamp = std::string(ts, ts + 5);
         }
+        // Count words
+        entry.wordCount = 0;
+        bool inWord = false;
+        for (char c : formatted) {
+            if (std::isspace(static_cast<unsigned char>(c))) {
+                if (inWord) entry.wordCount++;
+                inWord = false;
+            } else {
+                inWord = true;
+            }
+        }
+        if (inWord) entry.wordCount++;
         g_dashboard.addEntry(entry);
 
         OutputDebugStringA(("FLOW-ON LATENCY: " + std::to_string(latMs) + " ms\n").c_str());
@@ -478,6 +490,12 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
     // Dashboard (Phase 8)
     // ----------------------------------------------------------
     g_dashboard.init(hInst, g_hwnd);
+    
+    // Initialize dashboard settings from config
+    g_dashboard.m_settings.useGPU = g_config.settings().useGPU;
+    g_dashboard.m_settings.startWithWindows = g_config.settings().startWithWindows;
+    g_dashboard.m_settings.enableOverlay = true;
+    
     g_dashboard.onSettingsChanged = [](const DashboardSettings& ds) {
         // Apply settings changes from the dashboard UI
         g_config.settings().useGPU           = ds.useGPU;
@@ -490,6 +508,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
         } else {
             g_config.removeAutostart();
         }
+    };
+    
+    g_dashboard.onClearHistoryRequested = []() {
+        // Clear history in config if needed
+        OutputDebugStringA("FLOW-ON: History cleared from dashboard\n");
     };
 
     // ----------------------------------------------------------
