@@ -17,6 +17,12 @@ flow-on/
 *.dylib
 *.pdb
 *.ilk
+*.exp
+*.manifest
+*.res
+*.tlog
+*.lastbuildstate
+*.idb
 
 # ============================================================================
 # IDE and editor artifacts
@@ -26,12 +32,22 @@ flow-on/
 *.user
 *.filters
 *.VC.dblocal
+*.VC.opendb
+*.VC.db
+*.suo
+*.sdf
+*.opensdf
+.ipch/
 .clang-format
 .editorconfig
 CMakeUserPresets.json
 cmake_install.cmake
 CMakeCache.txt
+CMakeFiles/
 Makefile
+cmake-build-*/
+.idea/
+*.sln.iml
 
 # ============================================================================
 # Temporary and system files
@@ -45,6 +61,10 @@ Thumbs.db
 *.tmp
 *.temp
 .directory
+*.cache
+*.stackdump
+core
+core.*
 
 # ============================================================================
 # Python artifacts (from build.ps1 and various scripts)
@@ -57,6 +77,10 @@ __pycache__/
 *.egg-info/
 dist/
 build_python/
+.venv/
+venv/
+env/
+ENV/
 
 # ============================================================================
 # Large external files (users download these during build/setup)
@@ -78,9 +102,12 @@ flow-on.h.bak
 *.log
 CMakeOutput.log
 CMakeError.log
+*.log.*
 
 # Submodule artifacts
 external/whisper.cpp/bindings/java/bin/
+external/whisper.cpp/build/
+external/whisper.cpp/build-*/
 
 # ============================================================================
 # Environment and local configuration
@@ -88,6 +115,33 @@ external/whisper.cpp/bindings/java/bin/
 .env
 .env.local
 *.local
+config.local.json
+settings.local.json
+
+# ============================================================================
+# Installer outputs
+# ============================================================================
+FLOW-ON-Setup.exe
+*.msi
+*.msix
+*.appx
+*.nupkg
+
+# ============================================================================
+# Profiling and debugging artifacts
+# ============================================================================
+*.diagsession
+*.vspx
+*.psess
+*.etl
+
+# ============================================================================
+# OS generated files
+# ============================================================================
+$RECYCLE.BIN/
+System Volume Information/
+Desktop.ini
+*.lnk
 
 # Keep these files (whitelisting)
 # !models/README.txt

@@ -10,12 +10,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_compile_options(/arch:AVX2 /W3)
 
 # Release: aggressive optimisation chain
-add_compile_options("$<$<CONFIG:Release>:/O2>")
-add_compile_options("$<$<CONFIG:Release>:/Oi>")
-add_compile_options("$<$<CONFIG:Release>:/Ot>")
-add_compile_options("$<$<CONFIG:Release>:/fp:fast>")
-add_compile_options("$<$<CONFIG:Release>:/GL>")
-add_link_options("$<$<CONFIG:Release>:/LTCG>")
+add_compile_options("$<$<CONFIG:Release>:/O2>")      # Maximize speed
+add_compile_options("$<$<CONFIG:Release>:/Oi>")      # Enable intrinsic functions
+add_compile_options("$<$<CONFIG:Release>:/Ot>")      # Favor fast code
+add_compile_options("$<$<CONFIG:Release>:/fp:fast>") # Fast floating point
+add_compile_options("$<$<CONFIG:Release>:/GL>")      # Whole program optimization
+add_compile_options("$<$<CONFIG:Release>:/Gy>")      # Enable function-level linking
+add_compile_options("$<$<CONFIG:Release>:/Gw>")      # Optimize global data
+add_link_options("$<$<CONFIG:Release>:/LTCG>")      # Link-time code generation
+add_link_options("$<$<CONFIG:Release>:/OPT:REF>")    # Eliminate unreferenced functions
+add_link_options("$<$<CONFIG:Release>:/OPT:ICF>")    # Identical COMDAT folding
 
 # Debug: keep /Od but still allow vectorisation
 add_compile_options("$<$<CONFIG:Debug>:/fp:fast>")
@@ -32,8 +36,10 @@ add_compile_definitions(
 # --------------------------------------------------------------------------
 set(WHISPER_AVX2           ON  CACHE BOOL "" FORCE)
 set(WHISPER_F16C           ON  CACHE BOOL "" FORCE)
+set(WHISPER_AVX            ON  CACHE BOOL "" FORCE)  # Enable AVX
 set(WHISPER_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(WHISPER_ALL_WARNINGS   OFF CACHE BOOL "" FORCE)  # Disable warnings for faster build
 
 # Enable OpenMP so whisper.cpp matrix ops run on ALL cores
 set(GGML_OPENMP            ON  CACHE BOOL "" FORCE)
@@ -41,6 +47,9 @@ set(GGML_OPENMP            ON  CACHE BOOL "" FORCE)
 # Native optimisation: auto-detect AVX2 / FMA / SSE4.2
 set(GGML_NATIVE            ON  CACHE BOOL "" FORCE)
 set(GGML_FMA               ON  CACHE BOOL "" FORCE)
+set(GGML_AVX               ON  CACHE BOOL "" FORCE)
+set(GGML_AVX2              ON  CACHE BOOL "" FORCE)
+set(GGML_F16C              ON  CACHE BOOL "" FORCE)
 
 # Flash attention — reduces memory traffic, faster on long sequences
 set(WHISPER_FLASH_ATTN     ON  CACHE BOOL "" FORCE)

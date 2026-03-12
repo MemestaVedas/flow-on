@@ -81,6 +81,11 @@ bool Transcriber::init(const char* modelPath)
     whisper_context_params cp = whisper_context_default_params();
     cp.use_gpu    = true;
     cp.flash_attn = true;   // fused attention — less memory traffic
+    
+    // Performance: Enable GPU acceleration if available
+    #ifdef GGML_USE_CUDA
+    cp.use_gpu = true;
+    #endif
 
     m_ctx = whisper_init_from_file_with_params(modelPath, cp);
     if (!m_ctx) {
@@ -156,11 +161,13 @@ bool Transcriber::transcribeAsync(HWND hwnd, std::vector<float> pcm, UINT doneMs
 
         // -- Audio context: scale with actual audio length --
         // Short clips (<5s) need less context; longer clips get more.
+        // Optimized: use even smaller contexts for very short clips to maximize speed
         const float durationSec = static_cast<float>(pcm.size()) / 16000.0f;
-        if      (durationSec < 3.0f)  p.audio_ctx = 128;
-        else if (durationSec < 8.0f)  p.audio_ctx = 256;
-        else if (durationSec < 15.0f) p.audio_ctx = 384;
-        else                          p.audio_ctx = 512;
+        if      (durationSec < 2.0f)  p.audio_ctx = 64;   // Ultra-fast for short commands
+        else if (durationSec < 5.0f)  p.audio_ctx = 128;  // Fast for brief dictation
+        else if (durationSec < 10.0f) p.audio_ctx = 256;  // Balanced for medium clips
+        else if (durationSec < 20.0f) p.audio_ctx = 384;  // Standard for longer clips
+        else                          p.audio_ctx = 512;  // Max context for long audio
 
         // -- Decoding: single candidate, no fallback re-decode --
         p.greedy.best_of    = 1;     // 1 candidate instead of default 5 → ~5x faster decode
