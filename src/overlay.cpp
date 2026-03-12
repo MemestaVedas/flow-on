@@ -70,6 +70,7 @@ bool Overlay::init(HINSTANCE hInst)
     if (!createDeviceResources()) return false;
 
     SetTimer(m_hwnd, TIMER_ID, FPS_MS, nullptr);
+    edgeGlow.init(hInst);
     return true;
 }
 
@@ -155,6 +156,7 @@ void Overlay::setState(OverlayState s)
             m_flashFrames = 50;    // ~800 ms then auto-hide
         positionWindow();
     }
+    edgeGlow.setState(s);
 }
 
 void Overlay::pushRMS(float rms)
@@ -617,6 +619,7 @@ void Overlay::onTimer()
     }
 
     draw();
+    edgeGlow.onTimer();
 }
 
 // ==================================================================
@@ -653,6 +656,227 @@ void Overlay::shutdown()
     if (m_dcRT)        { m_dcRT->Release();        m_dcRT        = nullptr; }
     if (m_d2dFactory)  { m_d2dFactory->Release();  m_d2dFactory  = nullptr; }
     releaseGDIResources();
+    edgeGlow.shutdown();
+}
+
+// ==================================================================
+// ScreenEdgeGlow — full-screen gradient edge effect
+// ==================================================================
+
+bool ScreenEdgeGlow::createResources()
+{
+    m_screenW = GetSystemMetrics(SM_CXSCREEN);
+    m_screenH = GetSystemMetrics(SM_CYSCREEN);
+
+    // D2D factory
+    if (FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &m_d2dFactory)))
+        return false;
+
+    // DC render target with premultiplied alpha for UpdateLayeredWindow
+    D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(
+        D2D1_RENDER_TARGET_TYPE_DEFAULT,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
+        96.0f, 96.0f);
+
+    if (FAILED(m_d2dFactory->CreateDCRenderTarget(&props, &m_dcRT)))
+        return false;
+
+    // Full-screen 32-bit DIB
+    BITMAPINFO bmi            = {};
+    bmi.bmiHeader.biSize      = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth     = m_screenW;
+    bmi.bmiHeader.biHeight    = -m_screenH;  // top-down
+    bmi.bmiHeader.biPlanes    = 1;
+    bmi.bmiHeader.biBitCount  = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
+
+    HDC screenDC = GetDC(nullptr);
+    void* pBits  = nullptr;
+    m_hBitmap    = CreateDIBSection(screenDC, &bmi, DIB_RGB_COLORS, &pBits, nullptr, 0);
+    ReleaseDC(nullptr, screenDC);
+    if (!m_hBitmap) return false;
+
+    m_memDC = CreateCompatibleDC(nullptr);
+    SelectObject(m_memDC, m_hBitmap);
+    return true;
+}
+
+bool ScreenEdgeGlow::init(HINSTANCE hInst)
+{
+    if (!createResources()) return false;
+
+    WNDCLASSEXW wc   = {};
+    wc.cbSize        = sizeof(wc);
+    wc.lpfnWndProc   = WndProc;
+    wc.hInstance     = hInst;
+    wc.lpszClassName = L"FLOWON_EDGE_GLOW";
+    wc.hbrBackground = nullptr;
+    RegisterClassExW(&wc);
+
+    // Full-screen, click-through, always-on-top, layered
+    m_hwnd = CreateWindowExW(
+        WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
+        L"FLOWON_EDGE_GLOW", L"", WS_POPUP,
+        0, 0, m_screenW, m_screenH,
+        nullptr, nullptr, hInst, nullptr);
+
+    if (!m_hwnd) return false;
+    SetWindowLongPtrW(m_hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+    // Start hidden
+    ShowWindow(m_hwnd, SW_HIDE);
+    return true;
+}
+
+void ScreenEdgeGlow::setState(OverlayState s)
+{
+    m_state = s;
+    if (s == OverlayState::Hidden || s == OverlayState::Done || s == OverlayState::Error) {
+        m_dismissing = true;
+    } else {
+        m_dismissing = false;
+        SetWindowPos(m_hwnd, HWND_TOPMOST, 0, 0, m_screenW, m_screenH,
+                     SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    }
+}
+
+void ScreenEdgeGlow::drawEdgeBand(float x0, float y0, float x1, float y1,
+                                   bool horizontal, bool invertDir,
+                                   D2D1_COLOR_F color, float alpha)
+{
+    ID2D1GradientStopCollection* stops = nullptr;
+    D2D1_GRADIENT_STOP gs[3] = {
+        {0.0f, D2D1::ColorF(color.r, color.g, color.b, alpha * 0.55f)},
+        {0.35f, D2D1::ColorF(color.r, color.g, color.b, alpha * 0.22f)},
+        {1.0f, D2D1::ColorF(color.r, color.g, color.b, 0.0f)}
+    };
+    if (invertDir) {
+        gs[0].color.a = 0.0f;
+        gs[2].color.a = alpha * 0.55f;
+        gs[1].color.a = alpha * 0.22f;
+        // swap stop positions
+        gs[0].position = 0.0f;
+        gs[1].position = 0.65f;
+        gs[2].position = 1.0f;
+    }
+
+    if (FAILED(m_dcRT->CreateGradientStopCollection(gs, 3, &stops))) return;
+
+    ID2D1LinearGradientBrush* lgb = nullptr;
+    D2D1_POINT_2F pt0, pt1;
+    if (horizontal) {
+        pt0 = D2D1::Point2F(x0, invertDir ? y1 : y0);
+        pt1 = D2D1::Point2F(x0, invertDir ? y0 : y1);
+    } else {
+        pt0 = D2D1::Point2F(invertDir ? x1 : x0, y0);
+        pt1 = D2D1::Point2F(invertDir ? x0 : x1, y0);
+    }
+
+    m_dcRT->CreateLinearGradientBrush(
+        D2D1::LinearGradientBrushProperties(pt0, pt1), stops, &lgb);
+
+    if (lgb) {
+        m_dcRT->FillRectangle(D2D1::RectF(x0, y0, x1, y1), lgb);
+        lgb->Release();
+    }
+    stops->Release();
+}
+
+void ScreenEdgeGlow::draw()
+{
+    if (!m_dcRT || !m_memDC) return;
+
+    RECT rc = {0, 0, m_screenW, m_screenH};
+    if (FAILED(m_dcRT->BindDC(m_memDC, &rc))) return;
+
+    m_dcRT->BeginDraw();
+    m_dcRT->Clear(D2D1::ColorF(0, 0, 0, 0));  // fully transparent
+
+    // Breathing pulse: anim * (0.75 + 0.25 * sin(pulse))
+    const float breathe = m_anim * (0.75f + 0.25f * std::sin(m_pulse));
+
+    // Choose color based on state
+    D2D1_COLOR_F color;
+    switch (m_state) {
+        case OverlayState::Recording:
+            color = D2D1::ColorF(0.27f, 0.42f, 1.0f);   // Blue-indigo
+            break;
+        case OverlayState::Processing:
+            color = D2D1::ColorF(0.55f, 0.27f, 1.0f);   // Purple
+            break;
+        case OverlayState::Done:
+            color = D2D1::ColorF(0.10f, 0.82f, 0.46f);  // Green
+            break;
+        case OverlayState::Error:
+            color = D2D1::ColorF(1.0f, 0.27f, 0.27f);   // Red
+            break;
+        default:
+            color = D2D1::ColorF(0.27f, 0.42f, 1.0f);
+            break;
+    }
+
+    const float W  = static_cast<float>(m_screenW);
+    const float H  = static_cast<float>(m_screenH);
+    const float D  = EDGE_DEPTH;
+
+    // Top edge: gradient flows from top downward
+    drawEdgeBand(0, 0, W, D, true, false, color, breathe);
+    // Bottom edge: gradient flows from bottom upward
+    drawEdgeBand(0, H - D, W, H, true, true, color, breathe);
+    // Left edge: gradient flows from left rightward
+    drawEdgeBand(0, 0, D, H, false, false, color, breathe);
+    // Right edge: gradient flows from right leftward
+    drawEdgeBand(W - D, 0, W, H, false, true, color, breathe);
+
+    m_dcRT->EndDraw();
+    present();
+}
+
+void ScreenEdgeGlow::present()
+{
+    POINT ptSrc   = {0, 0};
+    POINT ptDst   = {0, 0};
+    SIZE  szWnd   = {m_screenW, m_screenH};
+    BLENDFUNCTION blend = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+    UpdateLayeredWindow(m_hwnd, nullptr, &ptDst, &szWnd,
+                        m_memDC, &ptSrc, 0, &blend, ULW_ALPHA);
+}
+
+void ScreenEdgeGlow::onTimer()
+{
+    if (m_dismissing) {
+        m_anim -= DISMISS_SPD;
+        if (m_anim <= 0.0f) {
+            m_anim       = 0.0f;
+            m_dismissing = false;
+            ShowWindow(m_hwnd, SW_HIDE);
+            return;
+        }
+    } else {
+        if (m_anim < 1.0f) m_anim += APPEAR_SPD;
+        if (m_anim > 1.0f) m_anim = 1.0f;
+        m_pulse += PULSE_SPD;
+    }
+    draw();
+}
+
+void ScreenEdgeGlow::shutdown()
+{
+    if (m_hwnd)     { DestroyWindow(m_hwnd); m_hwnd = nullptr; }
+    if (m_dcRT)     { m_dcRT->Release();     m_dcRT = nullptr; }
+    if (m_d2dFactory) { m_d2dFactory->Release(); m_d2dFactory = nullptr; }
+    if (m_memDC)    { DeleteDC(m_memDC);     m_memDC = nullptr; }
+    if (m_hBitmap)  { DeleteObject(m_hBitmap); m_hBitmap = nullptr; }
+}
+
+LRESULT CALLBACK ScreenEdgeGlow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    if (msg == WM_PAINT) {
+        PAINTSTRUCT ps;
+        BeginPaint(hwnd, &ps);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
 

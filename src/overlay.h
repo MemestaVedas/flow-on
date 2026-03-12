@@ -11,6 +11,54 @@
 enum class OverlayState { Hidden, Recording, Processing, Done, Error };
 
 // ------------------------------------------------------------------
+// ScreenEdgeGlow — full-screen layered window that paints translucent
+// gradient bands along all 4 screen edges. Activated by Overlay state.
+// Per-pixel alpha via UpdateLayeredWindow, fully click-through.
+// ------------------------------------------------------------------
+class ScreenEdgeGlow {
+public:
+    bool init(HINSTANCE hInst);
+    void shutdown();
+
+    // Call whenever the overlay state changes
+    void setState(OverlayState s);
+
+    // Called from Overlay::onTimer — advances animation and repaints
+    void onTimer();
+
+private:
+    static constexpr int   TIMER_ID    = 55;
+    static constexpr float EDGE_DEPTH  = 120.0f;  // pixels from edge
+    static constexpr float APPEAR_SPD  = 0.07f;
+    static constexpr float DISMISS_SPD = 0.06f;
+    static constexpr float PULSE_SPD   = 0.035f;  // breathing frequency
+
+    HWND    m_hwnd    = nullptr;
+    HDC     m_memDC   = nullptr;
+    HBITMAP m_hBitmap = nullptr;
+    int     m_screenW = 0;
+    int     m_screenH = 0;
+
+    ID2D1Factory*        m_d2dFactory = nullptr;
+    ID2D1DCRenderTarget* m_dcRT       = nullptr;
+
+    OverlayState m_state     = OverlayState::Hidden;
+    float        m_anim      = 0.0f;   // [0,1] fade in/out
+    float        m_pulse     = 0.0f;   // breathing phase (radians)
+    bool         m_dismissing = false;
+
+    bool createResources();
+    void draw();
+    void present();
+    void drawEdgeBand(float x0, float y0, float x1, float y1,
+                      bool horizontal,           // true = top/bottom, false = left/right
+                      bool invertDir,            // true = gradient faces inward from bottom/right
+                      D2D1_COLOR_F color, float alpha);
+
+    static LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
+};
+
+// ------------------------------------------------------------------
 // Floating pill overlay — Direct2D DC render target + UpdateLayeredWindow
 // for true per-pixel alpha (no "boxed outline" artefacts).
 // Driven by WM_TIMER at ~60 fps on the main thread.
@@ -25,6 +73,8 @@ public:
 
     // Thread-safe: called from audio callback.
     void pushRMS(float rms);
+
+    ScreenEdgeGlow edgeGlow;
 
 private:
     // ---- Layout constants ----
