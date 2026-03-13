@@ -109,6 +109,7 @@ private:
     float m_spinAngle    = 0.0f;   // Processing arc angle (degrees)
     float m_dotPulse     = 0.0f;   // Record dot pulse phase (radians)
     float m_idlePhase    = 0.0f;   // Idle sine wave phase
+    float m_bgPhase      = 0.0f;   // Pastel blob background phase
     float m_appearAnim   = 0.0f;   // Pill open/close scale  [0,1]
     float m_stateAnim    = 0.0f;   // Done/Error circle scale [0,1]
     int   m_flashFrames  = 0;      // Frames before auto-hide

@@ -1,10 +1,10 @@
-﻿// overlay.cpp â€” Direct2D pill overlay (DC render target + UpdateLayeredWindow)
+// overlay.cpp — Direct2D pill overlay (DC render target + UpdateLayeredWindow)
 //
 // Key improvement over the old HwndRenderTarget approach:
-//   â€¢ ID2D1DCRenderTarget renders into a 32-bit DIB with premultiplied alpha.
-//   â€¢ UpdateLayeredWindow composites the DIB using per-pixel alpha â€” the area
+//   • ID2D1DCRenderTarget renders into a 32-bit DIB with premultiplied alpha.
+//   • UpdateLayeredWindow composites the DIB using per-pixel alpha — the area
 //     outside the rounded pill is fully transparent with zero bleed/outline.
-//   â€¢ SetLayeredWindowAttributes(LWA_ALPHA) is NOT used, which was the cause
+//   • SetLayeredWindowAttributes(LWA_ALPHA) is NOT used, which was the cause
 //     of the "weird outline" in the previous version.
 //
 #include <windows.h>
@@ -47,13 +47,13 @@ bool Overlay::init(HINSTANCE hInst)
         }
     }
 
-    // Window class â€” no background brush; we paint everything ourselves
+    // Window class — no background brush; we paint everything ourselves
     WNDCLASSEXW wc   = {};
     wc.cbSize        = sizeof(wc);
     wc.lpfnWndProc   = WndProc;
     wc.hInstance     = hInst;
     wc.lpszClassName = L"FLOWON_OVERLAY";
-    wc.hbrBackground = nullptr;           // â† critical: no GDI background paint
+    wc.hbrBackground = nullptr;           // ← critical: no GDI background paint
     RegisterClassExW(&wc);
 
     // Layered, click-through, always-on-top popup
@@ -75,7 +75,7 @@ bool Overlay::init(HINSTANCE hInst)
 }
 
 // ==================================================================
-// GDI resources â€” 32-bit DIB + memory DC for UpdateLayeredWindow
+// GDI resources — 32-bit DIB + memory DC for UpdateLayeredWindow
 // ==================================================================
 bool Overlay::createGDIResources()
 {
@@ -122,7 +122,7 @@ bool Overlay::createDeviceResources()
 }
 
 // ==================================================================
-// positionWindow â€” centres pill near bottom of primary monitor
+// positionWindow — centres pill near bottom of primary monitor
 // ==================================================================
 void Overlay::positionWindow()
 {
@@ -181,7 +181,7 @@ void Overlay::strokeRect(const D2D1_ROUNDED_RECT& r, D2D1_COLOR_F c, float w)
 }
 
 // ==================================================================
-// draw â€” one frame
+// draw — one frame
 // ==================================================================
 void Overlay::draw()
 {
@@ -210,24 +210,83 @@ void Overlay::draw()
     const float ox      = (PILL_W - scaledW) * 0.5f;
     const float oy      = (PILL_H - scaledH) * 0.5f;
 
-    // ---- Pill background ----
+    // ---- Pill background (organic pastel, no hard container) ----
     const D2D1_ROUNDED_RECT pill = {
         D2D1::RectF(ox + 1.5f, oy + 1.5f, ox + scaledW - 1.5f, oy + scaledH - 1.5f),
         PILL_R * scale, PILL_R * scale
     };
-    fillRect  (pill, D2D1::ColorF(0.053f, 0.055f, 0.082f, 0.96f * opacity));
-    strokeRect(pill, D2D1::ColorF(1.f, 1.f, 1.f, 0.09f * opacity), 1.0f);
 
-    // ---- Subtle inner highlight at top ----
+    // Base glass tint
+    fillRect(pill, D2D1::ColorF(0.06f, 0.06f, 0.08f, 0.22f * opacity));
+
+    // Soft, shifting pastel blobs clipped to the rounded pill
+    ID2D1RoundedRectangleGeometry* pillGeo = nullptr;
+    m_d2dFactory->CreateRoundedRectangleGeometry(
+        D2D1::RoundedRect(pill.rect, pill.radiusX, pill.radiusY),
+        &pillGeo);
+
+    if (pillGeo) {
+        ID2D1Layer* layer = nullptr;
+        m_dcRT->CreateLayer(&layer);
+        if (layer) {
+            D2D1_LAYER_PARAMETERS lp = D2D1::LayerParameters();
+            lp.contentBounds = D2D1::RectF(ox, oy, ox + scaledW, oy + scaledH);
+            lp.geometricMask = pillGeo;
+            lp.maskAntialiasMode = D2D1_ANTIALIAS_MODE_PER_PRIMITIVE;
+            lp.opacity = opacity;
+
+            m_dcRT->PushLayer(lp, layer);
+
+            const float pcx = ox + scaledW * 0.5f;
+            const float pcy = oy + scaledH * 0.5f;
+            const float p   = m_bgPhase;
+
+            auto drawBlob = [&](float x, float y, float rx, float ry, D2D1_COLOR_F c0) {
+                ID2D1RadialGradientBrush* rgb = nullptr;
+                ID2D1GradientStopCollection* stops = nullptr;
+                D2D1_GRADIENT_STOP gs[2] = {
+                    {0.0f, c0},
+                    {1.0f, D2D1::ColorF(c0.r, c0.g, c0.b, 0.0f)}
+                };
+                m_dcRT->CreateGradientStopCollection(gs, 2, &stops);
+                if (stops) {
+                    m_dcRT->CreateRadialGradientBrush(
+                        D2D1::RadialGradientBrushProperties(
+                            D2D1::Point2F(x, y), D2D1::Point2F(0.f, 0.f), rx, ry),
+                        stops, &rgb);
+                    if (rgb) {
+                        m_dcRT->FillEllipse(
+                            D2D1::Ellipse(D2D1::Point2F(x, y), rx, ry), rgb);
+                        rgb->Release();
+                    }
+                    stops->Release();
+                }
+            };
+
+            // Pastel palette (mint, peach, lavender)
+            drawBlob(pcx + 72.0f * std::sin(p * 0.65f), pcy - 14.0f + 10.0f * std::cos(p * 0.82f), 92.0f, 58.0f,
+                     D2D1::ColorF(0.64f, 0.93f, 0.86f, 0.22f));
+            drawBlob(pcx - 54.0f * std::cos(p * 0.58f), pcy + 12.0f + 12.0f * std::sin(p * 0.74f), 78.0f, 52.0f,
+                     D2D1::ColorF(0.98f, 0.78f, 0.72f, 0.20f));
+            drawBlob(pcx + 18.0f * std::sin(p * 0.91f), pcy + 22.0f * std::cos(p * 0.63f), 70.0f, 46.0f,
+                     D2D1::ColorF(0.80f, 0.74f, 0.98f, 0.20f));
+
+            m_dcRT->PopLayer();
+            layer->Release();
+        }
+        pillGeo->Release();
+    }
+
+    // Light top sheen
     {
         const D2D1_ROUNDED_RECT hi = {
-            D2D1::RectF(ox + 1.5f, oy + 1.5f, ox + scaledW - 1.5f, oy + scaledH * 0.38f),
+            D2D1::RectF(ox + 1.5f, oy + 1.5f, ox + scaledW - 1.5f, oy + scaledH * 0.36f),
             PILL_R * scale, PILL_R * scale
         };
         ID2D1LinearGradientBrush* lgb = nullptr;
         ID2D1GradientStopCollection* stops = nullptr;
         D2D1_GRADIENT_STOP gs[2] = {
-            {0.0f, D2D1::ColorF(1.f, 1.f, 1.f, 0.045f * opacity)},
+            {0.0f, D2D1::ColorF(1.f, 1.f, 1.f, 0.050f * opacity)},
             {1.0f, D2D1::ColorF(1.f, 1.f, 1.f, 0.0f)}
         };
         m_dcRT->CreateGradientStopCollection(gs, 2, &stops);
@@ -235,7 +294,7 @@ void Overlay::draw()
             m_dcRT->CreateLinearGradientBrush(
                 D2D1::LinearGradientBrushProperties(
                     D2D1::Point2F(ox, oy + 1.5f),
-                    D2D1::Point2F(ox, oy + scaledH * 0.38f)),
+                    D2D1::Point2F(ox, oy + scaledH * 0.36f)),
                 stops, &lgb);
             if (lgb) { m_dcRT->FillRoundedRectangle(hi, lgb); lgb->Release(); }
             stops->Release();
@@ -258,7 +317,7 @@ void Overlay::draw()
 }
 
 // ==================================================================
-// present â€” blit DIB to screen via UpdateLayeredWindow
+// present — blit DIB to screen via UpdateLayeredWindow
 // ==================================================================
 void Overlay::present()
 {
@@ -271,7 +330,7 @@ void Overlay::present()
 }
 
 // ==================================================================
-// drawRecording â€” animated waveform + pulsing record dot
+// drawRecording — animated waveform + pulsing record dot
 // ==================================================================
 void Overlay::drawRecording(float cx, float cy)
 {
@@ -334,11 +393,11 @@ void Overlay::drawRecording(float cx, float cy)
     }
 
     // ---- Waveform bars ----
-    constexpr float barW    = 3.0f;
-    constexpr float barGap  = 2.2f;
+    constexpr float barW    = 3.8f;
+    constexpr float barGap  = 1.9f;
     const     float totalW  = WAVE_SAMPLES * (barW + barGap);
     const     float startX  = cx - totalW / 2.0f + 18.0f;
-    const     float maxBarH = PILL_H - 22.0f;
+    const     float maxBarH = PILL_H - 14.0f;
 
     for (int i = 0; i < WAVE_SAMPLES; ++i) {
         const float rmsVal = m_smoothed[i];
@@ -349,19 +408,40 @@ void Overlay::drawRecording(float cx, float cy)
         else if (i > WAVE_SAMPLES - 6)     fade = static_cast<float>(WAVE_SAMPLES - 1 - i) / 5.0f;
         fade = easeOut(fade);
 
-        float barH = rmsVal * maxBarH * 3.2f + 2.5f;
+        float barH = rmsVal * maxBarH * 4.1f + 3.0f;
         barH = std::min(barH * fade, maxBarH);
         barH = std::max(barH, 2.0f);
 
         const float x = startX + static_cast<float>(i) * (barW + barGap);
-
-        // Colour: violet (#8B6FEF) in the centre fading to soft blue (#5BA8FF) at edges
+        // Pastel gradient (mint -> peach -> lavender), slowly shifting over time
         const float t    = static_cast<float>(i) / static_cast<float>(WAVE_SAMPLES - 1);
-        // Mix violet â†’ blue by position; darken further at low amplitude
-        const float r    = lerp(0.545f, 0.357f, t);
-        const float g    = lerp(0.435f, 0.659f, t);
-        const float b    = lerp(0.937f, 1.000f, t);
-        const float a    = (0.55f + fade * 0.45f);
+        const float wob  = 0.5f + 0.5f * std::sin(m_bgPhase * 0.8f + t * 6.2831853f);
+        const float amp  = clamp01(rmsVal * 7.0f);
+
+        // Palette anchors
+        const float mR = 0.64f, mG = 0.93f, mB = 0.86f;  // mint
+        const float pR = 0.98f, pG = 0.78f, pB = 0.72f;  // peach
+        const float lR = 0.80f, lG = 0.74f, lB = 0.98f;  // lavender
+
+        float r, g, b;
+        if (wob < 0.5f) {
+            const float u = wob * 2.0f;
+            r = lerp(mR, pR, u);
+            g = lerp(mG, pG, u);
+            b = lerp(mB, pB, u);
+        } else {
+            const float u = (wob - 0.5f) * 2.0f;
+            r = lerp(pR, lR, u);
+            g = lerp(pG, lG, u);
+            b = lerp(pB, lB, u);
+        }
+
+        // Boost saturation/brightness slightly with amplitude
+        r = clamp01(r + amp * 0.08f);
+        g = clamp01(g + amp * 0.06f);
+        b = clamp01(b + amp * 0.10f);
+
+        const float a = (0.48f + fade * 0.52f);
 
         const D2D1_ROUNDED_RECT bar = {
             D2D1::RectF(x, cy - barH / 2.0f, x + barW, cy + barH / 2.0f),
@@ -374,7 +454,7 @@ void Overlay::drawRecording(float cx, float cy)
 }
 
 // ==================================================================
-// drawProcessing â€” gradient-fade sweeping spinner + label
+// drawProcessing — gradient-fade sweeping spinner + label
 // ==================================================================
 void Overlay::drawProcessing(float cx, float cy)
 {
@@ -393,7 +473,7 @@ void Overlay::drawProcessing(float cx, float cy)
         const float a1 = (m_spinAngle - 90.0f + t1 * SWEEP) * (PI / 180.0f);
 
         // Fade: tail is transparent, leading edge is opaque
-        const float opacity = t0 * t0;   // quadratic â€” fade from tail
+        const float opacity = t0 * t0;   // quadratic — fade from tail
 
         ID2D1PathGeometry* path = nullptr;
         m_d2dFactory->CreatePathGeometry(&path);
@@ -454,7 +534,7 @@ void Overlay::drawProcessing(float cx, float cy)
         }
     }
 
-    // "transcribingâ€¦" label to the right of the spinner
+    // "transcribing…" label to the right of the spinner
     if (m_textFormat) {
         ID2D1SolidColorBrush* b = nullptr;
         m_dcRT->CreateSolidColorBrush(D2D1::ColorF(0.7f, 0.68f, 0.80f, 0.90f), &b);
@@ -468,7 +548,7 @@ void Overlay::drawProcessing(float cx, float cy)
 }
 
 // ==================================================================
-// drawDone â€” scale-in green circle + animated checkmark
+// drawDone — scale-in green circle + animated checkmark
 // ==================================================================
 void Overlay::drawDone(float cx, float cy)
 {
@@ -514,8 +594,8 @@ void Overlay::drawDone(float cx, float cy)
         ID2D1SolidColorBrush* b = nullptr;
         m_dcRT->CreateSolidColorBrush(D2D1::ColorF(1.f, 1.f, 1.f, 1.0f), &b);
         if (b && prog > 0.0f) {
-            // Short left leg: (-5,-0) â†’ (-1.5, 4)
-            // Long right leg: (-1.5, 4) â†’ (6, -5)
+            // Short left leg: (-5,-0) → (-1.5, 4)
+            // Long right leg: (-1.5, 4) → (6, -5)
             const D2D1_POINT_2F p0 = {cx - 5.5f, cy + 0.5f};
             const D2D1_POINT_2F p1 = {cx - 1.5f, cy + 4.5f};
             const D2D1_POINT_2F p2 = {cx + 6.0f, cy - 5.0f};
@@ -539,7 +619,7 @@ void Overlay::drawDone(float cx, float cy)
 }
 
 // ==================================================================
-// drawError â€” scale-in red circle + X symbol
+// drawError — scale-in red circle + X symbol
 // ==================================================================
 void Overlay::drawError(float cx, float cy)
 {
@@ -593,7 +673,7 @@ void Overlay::drawError(float cx, float cy)
 }
 
 // ==================================================================
-// onTimer â€” update animations then draw
+// onTimer — update animations then draw
 // ==================================================================
 void Overlay::onTimer()
 {
@@ -618,6 +698,9 @@ void Overlay::onTimer()
             setState(OverlayState::Hidden);
     }
 
+    m_bgPhase += 0.018f;
+    if (m_bgPhase > 100000.0f) m_bgPhase = 0.0f;
+
     draw();
     edgeGlow.onTimer();
 }
@@ -635,7 +718,7 @@ LRESULT CALLBACK Overlay::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         }
     }
-    // WM_PAINT: do nothing â€” UpdateLayeredWindow handles compositing
+    // WM_PAINT: do nothing — UpdateLayeredWindow handles compositing
     if (msg == WM_PAINT) {
         PAINTSTRUCT ps;
         BeginPaint(hwnd, &ps);
@@ -660,7 +743,7 @@ void Overlay::shutdown()
 }
 
 // ==================================================================
-// ScreenEdgeGlow — full-screen gradient edge effect
+// ScreenEdgeGlow � full-screen gradient edge effect
 // ==================================================================
 
 bool ScreenEdgeGlow::createResources()
@@ -856,6 +939,7 @@ void ScreenEdgeGlow::onTimer()
         if (m_anim > 1.0f) m_anim = 1.0f;
         m_pulse += PULSE_SPD;
     }
+
     draw();
 }
 

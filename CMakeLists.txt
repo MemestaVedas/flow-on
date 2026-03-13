@@ -8,6 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Compiler flags — Release: maximum speed; Debug: debuggable but still decent
 # --------------------------------------------------------------------------
 add_compile_options(/arch:AVX2 /W3)
+add_compile_options(/FS)  # Fix MSVC C1041 when /MP writes the same PDB
 
 # Release: aggressive optimisation chain
 add_compile_options("$<$<CONFIG:Release>:/O2>")      # Maximize speed
