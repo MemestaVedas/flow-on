@@ -322,7 +322,7 @@ bool Transcriber::transcribeAsync(HWND hwnd, std::vector<float> pcm, UINT doneMs
         else if (durationSec < 30.0f) p.audio_ctx = 512;   // Longer
         else                          p.audio_ctx = 768;   // Cap for long audio
 
-        // -- Decoding: use best_of=3 for better quality with base model --
+        // -- Decoding: use best_of=1 for speed --
         p.greedy.best_of    = 1;     // 1 candidate for speed
         p.temperature       = 0.0f;  // start greedy
         p.temperature_inc   = 0.2f;  // higher increment for better fallback
