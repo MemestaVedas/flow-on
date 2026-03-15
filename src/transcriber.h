@@ -20,9 +20,14 @@ public:
     // recording, but guard again here for safety).
     bool transcribeAsync(HWND hwnd, std::vector<float> pcm, UINT doneMsg);
 
+    // Unload model after idle to reduce RAM when unused
+    void unloadIfIdle(uint64_t nowMs, uint64_t idleMs);
+
     bool isBusy() const { return m_busy.load(std::memory_order_acquire); }
 
 private:
-    void* m_ctx = nullptr;              // whisper_context* — opaque
+    void* m_ctx = nullptr;              // whisper_context* (opaque)
+    std::string m_modelPath;
     std::atomic<bool> m_busy{false};
+    std::atomic<uint64_t> m_lastUseMs{0};
 };

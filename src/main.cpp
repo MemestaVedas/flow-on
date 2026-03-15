@@ -42,6 +42,7 @@
 
 // WM_TIMER IDs
 #define TIMER_ID_KEYCHECK      2   // 50 ms poll for Alt key release during recording
+#define TIMER_ID_IDLECHECK     3   // 30 s idle check for model unload
 
 // ------------------------------------------------------------------
 // Globals
@@ -124,6 +125,7 @@ static void StopRecordingOnce(HWND hwnd)
         SetTrayIcon(IDI_IDLE_ICON, L"FLOW-ON! \u2014 Processing\u2026");
         PostMessageW(hwnd, WM_START_TRANSCRIPTION, 0, 0);
         KillTimer(hwnd, TIMER_ID_KEYCHECK);
+        KillTimer(hwnd, TIMER_ID_IDLECHECK);
     }
 }
 
@@ -217,6 +219,12 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             if (!altHeld || !vHeld || !shiftHeld) {
                 g_hotkeyDown = false;
                 StopRecordingOnce(hwnd);
+            }
+        }
+        if (wp == TIMER_ID_IDLECHECK) {
+            if (g_state.load(std::memory_order_acquire) == AppState::IDLE
+                && !g_transcriber.isBusy()) {
+                g_transcriber.unloadIfIdle(GetTickCount64(), 180000); // 3 min
             }
         }
         return 0;
@@ -358,6 +366,7 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     // ----------------------------------------------------------
     case WM_DESTROY:
         KillTimer(hwnd, TIMER_ID_KEYCHECK);
+        KillTimer(hwnd, TIMER_ID_IDLECHECK);
         UnregisterHotKey(hwnd, HOTKEY_ID_RECORD);
         Shell_NotifyIconW(NIM_DELETE, &g_nid);
         PostQuitMessage(0);
@@ -485,6 +494,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
         g_overlay.shutdown();
         return 1;
     }
+
+    SetTimer(g_hwnd, TIMER_ID_IDLECHECK, 30000, nullptr);
 
     // ----------------------------------------------------------
     // Dashboard (Phase 8)

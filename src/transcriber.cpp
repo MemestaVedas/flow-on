@@ -173,7 +173,8 @@ static std::string removeRepetitions(const std::string& text)
 // only the voiced region. This is the single biggest win for short
 // recordings with long pauses at start/end.
 // ------------------------------------------------------------------
-static void trimSilence(std::vector<float>& pcm, float threshold = 0.009f,\r\n                        int guardSamples = 1200 /* 100 ms at 16 kHz */)
+static void trimSilence(std::vector<float>& pcm, float threshold = 0.009f,
+                        int guardSamples = 1200 /* 100 ms at 16 kHz */)
 {
     const int n = static_cast<int>(pcm.size());
     if (n == 0) return;
@@ -200,6 +201,10 @@ static void trimSilence(std::vector<float>& pcm, float threshold = 0.009f,\r\n  
 
 bool Transcriber::init(const char* modelPath)
 {
+    if (!modelPath || !*modelPath) return false;
+    if (m_ctx) shutdown();
+    m_modelPath = modelPath;
+
     whisper_context_params cp = whisper_context_default_params();
     cp.use_gpu    = true;
     cp.flash_attn = true;   // fused attention — less memory traffic
@@ -209,12 +214,15 @@ bool Transcriber::init(const char* modelPath)
     cp.use_gpu = true;
     #endif
 
-    m_ctx = whisper_init_from_file_with_params(modelPath, cp);
+        m_ctx = whisper_init_from_file_with_params(modelPath, cp);
     if (!m_ctx) {
         // GPU init failed — retry on CPU
         cp.use_gpu    = false;
         cp.flash_attn = true;
         m_ctx = whisper_init_from_file_with_params(modelPath, cp);
+    }
+    if (m_ctx) {
+        m_lastUseMs.store(GetTickCount64(), std::memory_order_release);
     }
     return m_ctx != nullptr;
 }
@@ -227,6 +235,15 @@ void Transcriber::shutdown()
     }
 }
 
+void Transcriber::unloadIfIdle(uint64_t nowMs, uint64_t idleMs)
+{
+    if (!m_ctx) return;
+    if (m_busy.load(std::memory_order_acquire)) return;
+    const uint64_t last = m_lastUseMs.load(std::memory_order_acquire);
+    if (nowMs - last < idleMs) return;
+    shutdown();
+}
+
 bool Transcriber::transcribeAsync(HWND hwnd, std::vector<float> pcm, UINT doneMsg)
 {
     // Single-flight guard — prevent re-entry
@@ -234,6 +251,21 @@ bool Transcriber::transcribeAsync(HWND hwnd, std::vector<float> pcm, UINT doneMs
     if (!m_busy.compare_exchange_strong(expected, true,
             std::memory_order_acq_rel, std::memory_order_acquire))
         return false;
+
+    // Lazy re-init if model was unloaded while idle
+    if (!m_ctx) {
+        if (!m_modelPath.empty()) {
+            if (!init(m_modelPath.c_str())) {
+                m_busy.store(false, std::memory_order_release);
+                return false;
+            }
+        } else {
+            m_busy.store(false, std::memory_order_release);
+            return false;
+        }
+    }
+
+    m_lastUseMs.store(GetTickCount64(), std::memory_order_release);
 
     // Capture a copy of pcm before moving, validate it's not empty
     if (pcm.empty()) {
@@ -343,6 +375,7 @@ bool Transcriber::transcribeAsync(HWND hwnd, std::vector<float> pcm, UINT doneMs
             }
         }
 
+        m_lastUseMs.store(GetTickCount64(), std::memory_order_release);
         m_busy.store(false, std::memory_order_release);
 
         auto* s = new std::string(std::move(result));
