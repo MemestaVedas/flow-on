@@ -173,8 +173,7 @@ static std::string removeRepetitions(const std::string& text)
 // only the voiced region. This is the single biggest win for short
 // recordings with long pauses at start/end.
 // ------------------------------------------------------------------
-static void trimSilence(std::vector<float>& pcm, float threshold = 0.008f,
-                        int guardSamples = 1600 /* 100 ms at 16 kHz */)
+static void trimSilence(std::vector<float>& pcm, float threshold = 0.009f,\r\n                        int guardSamples = 1200 /* 100 ms at 16 kHz */)
 {
     const int n = static_cast<int>(pcm.size());
     if (n == 0) return;
@@ -282,19 +281,19 @@ bool Transcriber::transcribeAsync(HWND hwnd, std::vector<float> pcm, UINT doneMs
         p.print_realtime   = false;
         p.print_timestamps = false;
 
-        // -- Audio context: scale with actual audio length --
-        // With base.en model, we can use more context for better accuracy
+                // -- Audio context: scale with actual audio length --
+        // For prompt dictation, keep context tight for speed
         const float durationSec = static_cast<float>(pcm.size()) / 16000.0f;
-        if      (durationSec < 3.0f)  p.audio_ctx = 256;   // Good quality for short clips
-        else if (durationSec < 8.0f)  p.audio_ctx = 384;   // Better context for medium
-        else if (durationSec < 15.0f) p.audio_ctx = 512;   // Standard for longer clips
-        else if (durationSec < 30.0f) p.audio_ctx = 1024;  // More context for long audio
-        else                          p.audio_ctx = 1500;  // Max context for very long
+        if      (durationSec < 3.0f)  p.audio_ctx = 192;   // Fast for short clips
+        else if (durationSec < 8.0f)  p.audio_ctx = 256;   // Short-medium
+        else if (durationSec < 15.0f) p.audio_ctx = 384;   // Medium
+        else if (durationSec < 30.0f) p.audio_ctx = 512;   // Longer
+        else                          p.audio_ctx = 768;   // Cap for long audio
 
         // -- Decoding: use best_of=3 for better quality with base model --
-        p.greedy.best_of    = 3;     // 3 candidates for better accuracy (was 1)
+        p.greedy.best_of    = 1;     // 1 candidate for speed
         p.temperature       = 0.0f;  // start greedy
-        p.temperature_inc   = 0.4f;  // higher increment for better fallback
+        p.temperature_inc   = 0.2f;  // higher increment for better fallback
         p.entropy_thold     = 2.4f;  // slightly relaxed for base model
         p.logprob_thold     = -1.0f;
         p.no_speech_thold   = 0.6f;
@@ -304,7 +303,7 @@ bool Transcriber::transcribeAsync(HWND hwnd, std::vector<float> pcm, UINT doneMs
         p.suppress_nst   = true;    // suppress non-speech tokens
 
         // -- Token limit for short dictation (cap output, speeds up decode) --
-        p.max_tokens = 128;
+        p.max_tokens = 96;
 
         // -- No initial prompt (saves token encoding overhead) --
         p.initial_prompt = nullptr;
@@ -335,8 +334,8 @@ bool Transcriber::transcribeAsync(HWND hwnd, std::vector<float> pcm, UINT doneMs
             }
         }
 
-        // Safety net: remove hallucinated repetitions (Whisper tiny greedy-loop bug)
-        {
+                // Safety net: remove hallucinated repetitions (only for longer outputs)
+        if (result.size() > 120) {
             const std::string deduped = removeRepetitions(result);
             if (deduped != result) {
                 OutputDebugStringA(("FLOW-ON: collapsed repetition: [" + result + "] -> [" + deduped + "]\n").c_str());
