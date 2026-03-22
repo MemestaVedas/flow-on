@@ -70,7 +70,6 @@ bool Overlay::init(HINSTANCE hInst)
     if (!createDeviceResources()) return false;
 
     SetTimer(m_hwnd, TIMER_ID, FPS_MS, nullptr);
-    edgeGlow.init(hInst);
     return true;
 }
 
@@ -156,7 +155,6 @@ void Overlay::setState(OverlayState s)
             m_flashFrames = 50;    // ~800 ms then auto-hide
         positionWindow();
     }
-    edgeGlow.setState(s);
 }
 
 void Overlay::pushRMS(float rms)
@@ -344,7 +342,7 @@ void Overlay::drawRecording(float cx, float cy)
     for (int i = 0; i < WAVE_SAMPLES; ++i) {
         const int   idx    = (m_waveHead + i) % WAVE_SAMPLES;
         const float target = m_wave[idx];
-        m_smoothed[i] = lerp(m_smoothed[i], target, 0.28f);
+        m_smoothed[i] = lerp(m_smoothed[i], target, 0.45f);
 
         // Idle animation: subtle standing sine wave proportional to silence
         const float silence = 1.0f - clamp01(target * 8.0f);
@@ -392,9 +390,13 @@ void Overlay::drawRecording(float cx, float cy)
         }
     }
 
-    // ---- Waveform bars ----
+    // ---- Waveform bars (dots at silence, bars on speech) ----
     constexpr float barW    = 3.8f;
     constexpr float barGap  = 1.9f;
+    constexpr float dotW    = 2.4f;
+    constexpr float dotH    = 2.4f;
+    constexpr float dotIn   = 0.08f;  // RMS threshold (scaled) to start morph
+    constexpr float dotOut  = 0.22f;  // RMS threshold (scaled) to finish morph
     const     float totalW  = WAVE_SAMPLES * (barW + barGap);
     const     float startX  = cx - totalW / 2.0f + 18.0f;
     const     float maxBarH = PILL_H - 14.0f;
@@ -406,11 +408,15 @@ void Overlay::drawRecording(float cx, float cy)
         float fade = 1.0f;
         if      (i < 5)                    fade = static_cast<float>(i) / 5.0f;
         else if (i > WAVE_SAMPLES - 6)     fade = static_cast<float>(WAVE_SAMPLES - 1 - i) / 5.0f;
-        fade = easeOut(fade);
+        fade = easeOut(fade);        const float rmsScaled = clamp01(rmsVal * 8.0f);
+        const float morph = clamp01((rmsScaled - dotIn) / (dotOut - dotIn));
 
-        float barH = rmsVal * maxBarH * 4.1f + 3.0f;
+        float barH = rmsVal * maxBarH * 4.4f + 3.0f;
         barH = std::min(barH * fade, maxBarH);
-        barH = std::max(barH, 2.0f);
+        barH = std::max(barH, dotH);
+
+        const float h = lerp(dotH, barH, morph);
+        const float w = lerp(dotW, barW, morph);
 
         const float x = startX + static_cast<float>(i) * (barW + barGap);
         // Pastel gradient (mint -> peach -> lavender), slowly shifting over time
@@ -443,9 +449,10 @@ void Overlay::drawRecording(float cx, float cy)
 
         const float a = (0.48f + fade * 0.52f);
 
+                const float rx = std::min(1.8f, h * 0.5f);
         const D2D1_ROUNDED_RECT bar = {
-            D2D1::RectF(x, cy - barH / 2.0f, x + barW, cy + barH / 2.0f),
-            1.5f, 1.5f
+            D2D1::RectF(x + (barW - w) * 0.5f, cy - h / 2.0f, x + (barW + w) * 0.5f, cy + h / 2.0f),
+            rx, rx
         };
         ID2D1SolidColorBrush* wb = nullptr;
         m_dcRT->CreateSolidColorBrush(D2D1::ColorF(r, g, b, a), &wb);
@@ -702,7 +709,6 @@ void Overlay::onTimer()
     if (m_bgPhase > 100000.0f) m_bgPhase = 0.0f;
 
     draw();
-    edgeGlow.onTimer();
 }
 
 // ==================================================================
@@ -739,7 +745,6 @@ void Overlay::shutdown()
     if (m_dcRT)        { m_dcRT->Release();        m_dcRT        = nullptr; }
     if (m_d2dFactory)  { m_d2dFactory->Release();  m_d2dFactory  = nullptr; }
     releaseGDIResources();
-    edgeGlow.shutdown();
 }
 
 // ==================================================================
