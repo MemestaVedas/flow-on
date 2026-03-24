@@ -27,6 +27,7 @@ struct TranscriptionEntry {
 struct DashboardSettings {
     bool useGPU           = true;
     bool startWithWindows = true;
+    int  idleUnloadSec    = 60;    // 15-600 seconds
     int  modelChoice      = 0;     // 0 = tiny.en, 1 = base.en
     bool enableOverlay    = true;
     int  audioThreshold   = 8;     // 0-100

@@ -338,6 +338,15 @@ void ModernDashboard::rebuildSettings()
     overlay.isToggle = true;
     overlay.boolValue = &s.enableOverlay;
     m_settings.push_back(overlay);
+
+    SettingItem idleUnload;
+    idleUnload.label = "Model Idle Unload Timeout";
+    idleUnload.description = "Unload Whisper model after inactivity to reduce RAM";
+    idleUnload.isToggle = false;
+    idleUnload.intValue = &s.idleUnloadSec;
+    idleUnload.minVal = 15;
+    idleUnload.maxVal = 600;
+    m_settings.push_back(idleUnload);
 }
 
 // ==================================================================
@@ -1146,7 +1155,8 @@ void ModernDashboard::drawSettingsTab()
     // Draw settings items
     for (size_t i = 0; i < m_settings.size(); i++) {
         auto& setting = m_settings[i];
-        float itemH = 70;
+        const bool isSlider = !setting.isToggle && setting.intValue;
+        float itemH = isSlider ? 98.0f : 70.0f;
 
         // Store rect for hit testing
         setting.rect = {
@@ -1190,6 +1200,27 @@ void ModernDashboard::drawSettingsTab()
         // Toggle control
         if (setting.isToggle && setting.boolValue) {
             drawToggle(x + w - 70, y + 23, *setting.boolValue, setting.hover);
+        }
+
+        // Slider control
+        if (isSlider && setting.intValue) {
+            const float sliderX = x + 20.0f;
+            const float sliderW = w - 140.0f;
+            const float sliderY = y + 66.0f;
+            drawSlider(sliderX, sliderY, sliderW, *setting.intValue,
+                       setting.minVal, setting.maxVal, setting.hover);
+
+            wchar_t valueBuf[32] = {};
+            swprintf_s(valueBuf, L"%d sec", *setting.intValue);
+            if (m_fontSmall) {
+                m_dcRT->CreateSolidColorBrush(Colors::TextSecondary, &brush);
+                if (brush) {
+                    D2D1_RECT_F rc = {x + w - 110.0f, y + 58.0f, x + w - 20.0f, y + 84.0f};
+                    m_dcRT->DrawTextW(valueBuf, static_cast<UINT32>(wcslen(valueBuf)),
+                                      m_fontSmall, rc, brush);
+                    brush->Release();
+                }
+            }
         }
 
         y += itemH + 12;
@@ -1295,6 +1326,24 @@ void ModernDashboard::onLButtonDown(int x, int y)
         int setting = hitTestSetting(x, y);
         if (setting >= 0 && m_settings[setting].isToggle && m_settings[setting].boolValue) {
             *m_settings[setting].boolValue = !*m_settings[setting].boolValue;
+            if (m_dashboard && m_dashboard->onSettingsChanged) {
+                m_dashboard->onSettingsChanged(m_dashboard->m_settings);
+            }
+        } else if (setting >= 0 && m_settings[setting].intValue) {
+            auto& s = m_settings[setting];
+            const float sliderX = static_cast<float>(s.rect.left) + 20.0f;
+            const float sliderW = static_cast<float>(s.rect.right - s.rect.left) - 140.0f;
+            float pct = (static_cast<float>(x) - sliderX) / sliderW;
+            if (pct < 0.0f) pct = 0.0f;
+            if (pct > 1.0f) pct = 1.0f;
+
+            const int range = s.maxVal - s.minVal;
+            int rawValue = s.minVal + static_cast<int>(pct * static_cast<float>(range));
+            int stepped = ((rawValue + 2) / 5) * 5;
+            if (stepped < s.minVal) stepped = s.minVal;
+            if (stepped > s.maxVal) stepped = s.maxVal;
+
+            *s.intValue = stepped;
             if (m_dashboard && m_dashboard->onSettingsChanged) {
                 m_dashboard->onSettingsChanged(m_dashboard->m_settings);
             }

@@ -71,6 +71,7 @@ static std::atomic<AppState> g_state{AppState::IDLE};
 static std::atomic<bool>     g_recordingActive{false};
 static bool                  g_hotkeyDown   = false;
 static bool                  g_altHotkeyFallback = false; // true = using Alt+Shift+V
+static std::atomic<uint64_t> g_idleUnloadMs{60000};
 
 // Timing: used to measure transcription latency for the history entry
 static std::chrono::steady_clock::time_point g_recordStart;
@@ -92,6 +93,13 @@ static std::string WideToUtf8(const std::wstring& value)
     WideCharToMultiByte(
         CP_UTF8, 0, value.c_str(), -1, out.data(), needed, nullptr, nullptr);
     return out;
+}
+
+static uint64_t ClampIdleUnloadMs(int sec)
+{
+    if (sec < 15) sec = 15;
+    if (sec > 600) sec = 600;
+    return static_cast<uint64_t>(sec) * 1000ULL;
 }
 
 // ------------------------------------------------------------------
@@ -263,7 +271,9 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (wp == TIMER_ID_IDLECHECK) {
             if (g_state.load(std::memory_order_acquire) == AppState::IDLE
                 && !g_transcriber.isBusy()) {
-                g_transcriber.unloadIfIdle(GetTickCount64(), 60000); // 60 sec
+                g_transcriber.unloadIfIdle(
+                    GetTickCount64(),
+                    g_idleUnloadMs.load(std::memory_order_acquire));
             }
         }
         return 0;
@@ -468,6 +478,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
     // ----------------------------------------------------------
     g_config.load();
     g_snippets.setSnippets(g_config.settings().snippets);
+    g_idleUnloadMs.store(ClampIdleUnloadMs(g_config.settings().idleUnloadSec),
+                         std::memory_order_release);
     if (g_config.settings().startWithWindows) {
         wchar_t exeFull[MAX_PATH] = {};
         GetModuleFileNameW(nullptr, exeFull, MAX_PATH);
@@ -550,12 +562,15 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
     // Initialize dashboard settings from config
     g_dashboard.m_settings.useGPU = g_config.settings().useGPU;
     g_dashboard.m_settings.startWithWindows = g_config.settings().startWithWindows;
+    g_dashboard.m_settings.idleUnloadSec = g_config.settings().idleUnloadSec;
     g_dashboard.m_settings.enableOverlay = true;
     
     g_dashboard.onSettingsChanged = [](const DashboardSettings& ds) {
         // Apply settings changes from the dashboard UI
         g_config.settings().useGPU           = ds.useGPU;
         g_config.settings().startWithWindows = ds.startWithWindows;
+        g_config.settings().idleUnloadSec    = ds.idleUnloadSec;
+        g_idleUnloadMs.store(ClampIdleUnloadMs(ds.idleUnloadSec), std::memory_order_release);
         g_transcriber.setUseGPU(ds.useGPU);
         g_config.save();
         if (ds.startWithWindows) {

@@ -39,6 +39,11 @@ bool ConfigManager::load()
         if (j.contains("model"))              m_settings.model            = j["model"];
         if (j.contains("use_gpu"))            m_settings.useGPU           = j["use_gpu"];
         if (j.contains("start_with_windows")) m_settings.startWithWindows = j["start_with_windows"];
+        if (j.contains("idle_unload_sec")) {
+            m_settings.idleUnloadSec = j["idle_unload_sec"];
+            if (m_settings.idleUnloadSec < 15) m_settings.idleUnloadSec = 15;
+            if (m_settings.idleUnloadSec > 600) m_settings.idleUnloadSec = 600;
+        }
 
         if (j.contains("snippets") && j["snippets"].is_object()) {
             m_settings.snippets.clear();
@@ -69,6 +74,7 @@ bool ConfigManager::save() const
     j["model"]              = m_settings.model;
     j["use_gpu"]            = m_settings.useGPU;
     j["start_with_windows"] = m_settings.startWithWindows;
+    j["idle_unload_sec"]    = m_settings.idleUnloadSec;
 
     json snips;
     for (auto& [k, v] : m_settings.snippets)

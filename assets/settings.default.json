@@ -3,6 +3,7 @@
   "mode": "auto",
   "model": "tiny.en",
   "use_gpu": true,
+  "idle_unload_sec": 60,
   "start_with_windows": true,
   "snippets": {
     "insert email": "you@yourdomain.com",
