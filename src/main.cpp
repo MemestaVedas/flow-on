@@ -15,6 +15,7 @@
 #include <atomic>
 #include <string>
 #include <chrono>
+#include <vector>
 
 #include "audio_manager.h"
 #include "transcriber.h"
@@ -74,6 +75,25 @@ static bool                  g_altHotkeyFallback = false; // true = using Alt+Sh
 // Timing: used to measure transcription latency for the history entry
 static std::chrono::steady_clock::time_point g_recordStart;
 
+static bool FileExistsWPath(const std::wstring& path)
+{
+    const DWORD attr = GetFileAttributesW(path.c_str());
+    return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+static std::string WideToUtf8(const std::wstring& value)
+{
+    if (value.empty()) return {};
+    const int needed = WideCharToMultiByte(
+        CP_UTF8, 0, value.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (needed <= 1) return {};
+
+    std::string out(static_cast<size_t>(needed - 1), '\0');
+    WideCharToMultiByte(
+        CP_UTF8, 0, value.c_str(), -1, out.data(), needed, nullptr, nullptr);
+    return out;
+}
+
 // ------------------------------------------------------------------
 // Helper: swap tray icon and tooltip
 // ------------------------------------------------------------------
@@ -125,14 +145,13 @@ static void StopRecordingOnce(HWND hwnd)
         SetTrayIcon(IDI_IDLE_ICON, L"FLOW-ON! \u2014 Processing\u2026");
         PostMessageW(hwnd, WM_START_TRANSCRIPTION, 0, 0);
         KillTimer(hwnd, TIMER_ID_KEYCHECK);
-        KillTimer(hwnd, TIMER_ID_IDLECHECK);
     }
 }
 
 // ------------------------------------------------------------------
 // Build the model path relative to the executable directory
 // ------------------------------------------------------------------
-static std::string GetModelPath()
+static std::string ResolveModelPath(const std::string& configuredModel)
 {
     wchar_t exeDir[MAX_PATH] = {};
     GetModuleFileNameW(nullptr, exeDir, MAX_PATH);
@@ -140,9 +159,29 @@ static std::string GetModelPath()
     wchar_t* lastSlash = wcsrchr(exeDir, L'\\');
     if (lastSlash) *(lastSlash + 1) = L'\0';
 
-    std::wstring model = std::wstring(exeDir) + L"models\\ggml-base.en.bin";
-    // Convert to narrow string (ASCII-safe path)
-    return std::string(model.begin(), model.end());
+    // Try configured model first, then common English fallbacks.
+    std::vector<std::wstring> candidateFiles;
+    if (configuredModel == "tiny.en") {
+        candidateFiles.push_back(L"ggml-tiny.en.bin");
+    } else if (configuredModel == "base.en") {
+        candidateFiles.push_back(L"ggml-base.en.bin");
+    } else if (configuredModel == "tiny") {
+        candidateFiles.push_back(L"ggml-tiny.bin");
+    } else if (configuredModel == "base") {
+        candidateFiles.push_back(L"ggml-base.bin");
+    }
+
+    candidateFiles.push_back(L"ggml-tiny.en.bin");
+    candidateFiles.push_back(L"ggml-base.en.bin");
+
+    for (const auto& file : candidateFiles) {
+        const std::wstring full = std::wstring(exeDir) + L"models\\" + file;
+        if (FileExistsWPath(full)) {
+            return WideToUtf8(full);
+        }
+    }
+
+    return "";
 }
 
 // ------------------------------------------------------------------
@@ -224,7 +263,7 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (wp == TIMER_ID_IDLECHECK) {
             if (g_state.load(std::memory_order_acquire) == AppState::IDLE
                 && !g_transcriber.isBusy()) {
-                g_transcriber.unloadIfIdle(GetTickCount64(), 180000); // 3 min
+                g_transcriber.unloadIfIdle(GetTickCount64(), 60000); // 60 sec
             }
         }
         return 0;
@@ -480,20 +519,26 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
     // ----------------------------------------------------------
     // Whisper transcriber (Phase 5)
     // ----------------------------------------------------------
-    const std::string modelPath = GetModelPath();
-    if (!g_transcriber.init(modelPath.c_str())) {
+    const std::string modelPath = ResolveModelPath(g_config.settings().model);
+    if (modelPath.empty()) {
         MessageBoxW(nullptr,
-            L"Failed to load Whisper model.\n\n"
-            L"Expected location:\n"
-            L"  <exe-dir>\\models\\ggml-base.en.bin\n\n"
-            L"Download it with:\n"
-            L"  external\\whisper.cpp\\models\\download-ggml-model.cmd base.en",
+            L"No Whisper model found in:\n"
+            L"  <exe-dir>\\models\\\n\n"
+            L"Expected one of:\n"
+            L"  ggml-tiny.en.bin\n"
+            L"  ggml-base.en.bin\n\n"
+            L"Download one with:\n"
+            L"  external\\whisper.cpp\\models\\download-ggml-model.cmd tiny.en",
             L"FLOW-ON! — Model Not Found", MB_ICONERROR);
         Shell_NotifyIconW(NIM_DELETE, &g_nid);
         g_audio.shutdown();
         g_overlay.shutdown();
         return 1;
     }
+
+    // Keep baseline RAM low by loading the model only when transcription starts.
+    g_transcriber.setModelPath(modelPath);
+    g_transcriber.setUseGPU(g_config.settings().useGPU);
 
     SetTimer(g_hwnd, TIMER_ID_IDLECHECK, 30000, nullptr);
 
@@ -511,6 +556,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
         // Apply settings changes from the dashboard UI
         g_config.settings().useGPU           = ds.useGPU;
         g_config.settings().startWithWindows = ds.startWithWindows;
+        g_transcriber.setUseGPU(ds.useGPU);
         g_config.save();
         if (ds.startWithWindows) {
             wchar_t exeFull[MAX_PATH] = {};

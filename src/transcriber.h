@@ -9,6 +9,10 @@
 
 class Transcriber {
 public:
+    // Configure model and runtime before first transcription.
+    void setModelPath(const std::string& modelPath) { m_modelPath = modelPath; }
+    void setUseGPU(bool useGPU) { m_useGPU = useGPU; }
+
     // modelPath: e.g. "models/ggml-tiny.en.bin" (relative to CWD or absolute).
     // Tries GPU first; falls back to CPU silently.
     bool init(const char* modelPath);
@@ -28,6 +32,7 @@ public:
 private:
     void* m_ctx = nullptr;              // whisper_context* (opaque)
     std::string m_modelPath;
+    bool m_useGPU = true;
     std::atomic<bool> m_busy{false};
     std::atomic<uint64_t> m_lastUseMs{0};
 };

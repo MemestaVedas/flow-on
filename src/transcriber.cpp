@@ -206,12 +206,12 @@ bool Transcriber::init(const char* modelPath)
     m_modelPath = modelPath;
 
     whisper_context_params cp = whisper_context_default_params();
-    cp.use_gpu    = true;
+    cp.use_gpu    = m_useGPU;
     cp.flash_attn = true;   // fused attention — less memory traffic
     
     // Performance: Enable GPU acceleration if available
     #ifdef GGML_USE_CUDA
-    cp.use_gpu = true;
+    cp.use_gpu = m_useGPU;
     #endif
 
         m_ctx = whisper_init_from_file_with_params(modelPath, cp);
