@@ -1,4 +1,4 @@
-// formatter.cpp — four-pass speech-to-text formatter
+// formatter.cpp — five-pass speech-to-text formatter (WhisperFlow-style cleanup)
 #include <windows.h>
 #include "formatter.h"
 #include <regex>
@@ -25,11 +25,18 @@ const std::vector<std::wregex> FILLERS_SENTENCE_START = {
     std::wregex(LR"(^(so|well|okay|ok|like),?\s+)",       std::regex::icase),
     std::wregex(LR"(^(basically|kind of|sort of)\s+)",     std::regex::icase),
     std::wregex(LR"(^(right|alright|now then),?\s+)",      std::regex::icase),
+    std::wregex(LR"(^(I mean|actually),?\s+)",             std::regex::icase),
 };
 
 const std::wregex RE_MULTI_SPACE{LR"(\s{2,})"};
 const std::wregex RE_TRIM{LR"(^\s+|\s+$)"};
 const std::wregex RE_LEADING_PUNCT{LR"(^[,;:.]\s*)"};
+
+// Whisper artifact patterns to strip
+const std::wregex RE_BLANK_AUDIO{LR"(\[BLANK_AUDIO\])", std::regex::icase};
+const std::wregex RE_SILENCE_TAG{LR"(\((silence|inaudible|background noise)\))", std::regex::icase};
+const std::wregex RE_TIMESTAMP{LR"(\[\d{2}:\d{2}[.:,]\d{3}\s*-->\s*\d{2}:\d{2}[.:,]\d{3}\])"};
+const std::wregex RE_BRACKET_TAG{LR"(\[(music|laughter|applause|silence)\])", std::regex::icase};
 
 // Coding-mode voice commands
 const std::wregex RE_CAMEL {LR"(^camel\s+case\s+(.+)$)", std::regex::icase};
@@ -64,6 +71,12 @@ static std::string toNarrow(const std::wstring& w)
 
 static std::wstring removeFillers(std::wstring t)
 {
+    // Strip Whisper artifacts first
+    t = std::regex_replace(t, RE_BLANK_AUDIO, L"");
+    t = std::regex_replace(t, RE_SILENCE_TAG, L"");
+    t = std::regex_replace(t, RE_TIMESTAMP,   L"");
+    t = std::regex_replace(t, RE_BRACKET_TAG,  L"");
+
     for (auto& r : FILLERS_GLOBAL)
         t = std::regex_replace(t, r, L" ");
     for (auto& r : FILLERS_SENTENCE_START)
@@ -137,11 +150,12 @@ static std::wstring applyCodingTransforms(std::wstring t)
 std::string FormatTranscription(const std::string& raw, AppMode mode)
 {
     std::wstring t = toWide(raw);
-    t = removeFillers(t);    // Pass 1
-    t = cleanup(t);          // Pass 2
-    t = fixPunctuation(t);   // Pass 3
+    t = removeFillers(t);    // Pass 1: strip artifacts + fillers
+    t = cleanup(t);          // Pass 2: whitespace + capitalize
+    if (mode != AppMode::CODING)
+        t = fixPunctuation(t);   // Pass 3: trailing period (prose only)
     if (mode == AppMode::CODING)
-        t = applyCodingTransforms(t);  // Pass 4
+        t = applyCodingTransforms(t);  // Pass 4: camel/snake/caps
 
     return toNarrow(t);
 }

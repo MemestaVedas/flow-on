@@ -42,7 +42,7 @@
 #define HOTKEY_ID_RECORD       1
 
 // WM_TIMER IDs
-#define TIMER_ID_KEYCHECK      2   // 50 ms poll for Alt key release during recording
+#define TIMER_ID_KEYCHECK      2   // 30 ms poll for Alt key release + VAD during recording
 #define TIMER_ID_IDLECHECK     3   // 30 s idle check for model unload
 
 // ------------------------------------------------------------------
@@ -71,7 +71,7 @@ static std::atomic<AppState> g_state{AppState::IDLE};
 static std::atomic<bool>     g_recordingActive{false};
 static bool                  g_hotkeyDown   = false;
 static bool                  g_altHotkeyFallback = false; // true = using Alt+Shift+V
-static std::atomic<uint64_t> g_idleUnloadMs{60000};
+static std::atomic<uint64_t> g_idleUnloadMs{120000};  // 120 s default — keep model warm
 
 // Timing: used to measure transcription latency for the history entry
 static std::chrono::steady_clock::time_point g_recordStart;
@@ -245,9 +245,7 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             SetTrayIcon(IDI_RECORDING_ICON, L"FLOW-ON! \u2014 Recording\u2026");
             g_audio.startCapture();
 
-            // Poll every 50 ms for Alt key release (more reliable than WM_KEYUP
-            // on a hidden window)
-            SetTimer(hwnd, TIMER_ID_KEYCHECK, 50, nullptr);
+            SetTimer(hwnd, TIMER_ID_KEYCHECK, 30, nullptr);  // 30 ms poll
         }
         return 0;
 
@@ -266,6 +264,22 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             if (!altHeld || !vHeld || !shiftHeld) {
                 g_hotkeyDown = false;
                 StopRecordingOnce(hwnd);
+            }
+            // VAD: auto-stop after 2 s of silence (RMS below threshold)
+            else {
+                static int silentFrames = 0;
+                const float rms = g_audio.getRMS();
+                if (rms < 0.008f) {
+                    silentFrames++;
+                    // 2000ms / 30ms per poll = ~67 consecutive silent polls
+                    if (silentFrames > 67) {
+                        silentFrames = 0;
+                        g_hotkeyDown = false;
+                        StopRecordingOnce(hwnd);
+                    }
+                } else {
+                    silentFrames = 0;
+                }
             }
         }
         if (wp == TIMER_ID_IDLECHECK) {
@@ -304,8 +318,8 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         const int dropped = g_audio.getDroppedSamples();
         g_audio.resetDropCounter();
 
-        // Gate on a meaningful recording length (>0.25 s) and low drop rate
-        const bool tooShort  = pcm.size() < 16000 / 4;
+        // Gate on a meaningful recording length (>0.15 s) and low drop rate
+        const bool tooShort  = pcm.size() < 2400;   // 0.15 s at 16 kHz
         const bool tooDroppy = dropped > 160;   // >10 ms gap = noticeable corruption
 
         if (tooShort || tooDroppy) {
@@ -371,7 +385,13 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 now - g_recordStart).count());
 
         if (!formatted.empty()) {
-            std::wstring wide(formatted.begin(), formatted.end());
+            // Proper UTF-8 → Wide conversion (handles multi-byte correctly)
+            int wlen = MultiByteToWideChar(CP_UTF8, 0, formatted.c_str(), -1, nullptr, 0);
+            std::wstring wide;
+            if (wlen > 1) {
+                wide.resize(wlen - 1);
+                MultiByteToWideChar(CP_UTF8, 0, formatted.c_str(), -1, wide.data(), wlen);
+            }
             g_state.store(AppState::INJECTING, std::memory_order_release);
             InjectText(wide);
         }

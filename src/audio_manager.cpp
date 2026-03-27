@@ -19,7 +19,7 @@ extern Overlay* g_overlayPtr;
 // Lock-free ring buffer: 30 seconds of 16 kHz mono PCM = 480 000 floats.
 // Declared static so it lives for the duration of the process.
 // ------------------------------------------------------------------
-static moodycamel::ReaderWriterQueue<float> g_ring(16000 * 30);
+static moodycamel::ReaderWriterQueue<float> g_ring(16000 * 15);  // 15 s ring buffer
 
 // Internal helper struct so we can pass *this* through the C callback.
 struct DeviceHolder {
@@ -58,7 +58,7 @@ void AudioManager::onAudioData(const float* data, size_t frames)
 bool AudioManager::init(SampleCallback cb)
 {
     m_callback = cb;
-    m_recordBuffer.reserve(16000 * 30);   // pre-alloc once
+    m_recordBuffer.reserve(16000 * 15);   // pre-alloc for 15 s
 
     auto* h  = new DeviceHolder();
     h->owner = this;
@@ -69,7 +69,7 @@ bool AudioManager::init(SampleCallback cb)
     cfg.sampleRate             = 16000;
     cfg.dataCallback           = data_callback;
     cfg.pUserData              = h;
-    cfg.periodSizeInFrames     = 1600;    // 100 ms chunks
+    cfg.periodSizeInFrames     = 480;     // 30 ms chunks — lower latency
 
     if (ma_device_init(nullptr, &cfg, &h->device) != MA_SUCCESS) {
         delete h;
@@ -106,7 +106,7 @@ std::vector<float> AudioManager::drainBuffer()
         m_recordBuffer.push_back(s);
     // Move instead of copy — avoids duplicating up to 1.9 MB of PCM
     std::vector<float> out = std::move(m_recordBuffer);
-    m_recordBuffer.reserve(16000 * 30);   // re-allocate for next session
+    m_recordBuffer.reserve(16000 * 15);   // re-allocate for next session
     return out;
 }
 

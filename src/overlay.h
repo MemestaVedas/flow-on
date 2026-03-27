@@ -29,8 +29,8 @@ public:
 private:
     static constexpr int   TIMER_ID    = 55;
     static constexpr float EDGE_DEPTH  = 120.0f;  // pixels from edge
-    static constexpr float APPEAR_SPD  = 0.07f;
-    static constexpr float DISMISS_SPD = 0.06f;
+    static constexpr float APPEAR_SPD  = 0.12f;
+    static constexpr float DISMISS_SPD = 0.10f;
     static constexpr float PULSE_SPD   = 0.035f;  // breathing frequency
 
     HWND    m_hwnd    = nullptr;
@@ -85,8 +85,8 @@ private:
     static constexpr int   TIMER_ID      = 42;
 
     // ---- Animation speeds (fraction per frame @ 60 fps) ----
-    static constexpr float APPEAR_SPD    = 0.14f;   // 0 → 1
-    static constexpr float DISMISS_SPD   = 0.13f;   // 1 → 0
+    static constexpr float APPEAR_SPD    = 0.20f;   // 0 → 1 (snappy)
+    static constexpr float DISMISS_SPD   = 0.18f;   // 1 → 0 (snappy)
     static constexpr float STATE_SPD     = 0.16f;   // 0 → 1  (Done/Error circle)
 
     // ---- Window / GDI resources ----

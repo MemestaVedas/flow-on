@@ -1,4 +1,4 @@
-// injector.cpp — injects a UTF-16 string into the focused application.
+// injector.cpp — clipboard-first text injection (WhisperFlow-style reliability)
 #include <windows.h>
 #include "injector.h"
 #include <vector>
@@ -20,6 +20,21 @@ static bool ContainsSurrogates(const std::wstring& text)
 // SendInput Unicode events.
 static void InjectViaClipboard(const std::wstring& text)
 {
+    // Save existing clipboard contents so we can restore after injection
+    std::wstring savedClipboard;
+    if (OpenClipboard(nullptr)) {
+        HANDLE hData = GetClipboardData(CF_UNICODETEXT);
+        if (hData) {
+            const wchar_t* pszText = static_cast<const wchar_t*>(GlobalLock(hData));
+            if (pszText) {
+                savedClipboard = pszText;
+                GlobalUnlock(hData);
+            }
+        }
+        CloseClipboard();
+    }
+
+    // Set our text on the clipboard
     if (!OpenClipboard(nullptr)) return;
     EmptyClipboard();
 
@@ -32,43 +47,37 @@ static void InjectViaClipboard(const std::wstring& text)
             GlobalUnlock(hMem);
         }
         SetClipboardData(CF_UNICODETEXT, hMem);
-        // GlobalFree must NOT be called after SetClipboardData — the OS owns it now.
     }
     CloseClipboard();
 
-    // Small delay so the target window has time to receive WM_DRAWCLIPBOARD
-    // before we send the keystrokes.
-    Sleep(30);
+    Sleep(15);  // Brief delay for clipboard propagation
 
     keybd_event(VK_CONTROL, 0, 0, 0);
     keybd_event('V',         0, 0, 0);
     keybd_event('V',         0, KEYEVENTF_KEYUP, 0);
     keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0);
+
+    // Restore the user's original clipboard after a short delay
+    Sleep(50);
+    if (!savedClipboard.empty() && OpenClipboard(nullptr)) {
+        EmptyClipboard();
+        const size_t rBytes = (savedClipboard.size() + 1) * sizeof(wchar_t);
+        HGLOBAL hRestore = GlobalAlloc(GMEM_MOVEABLE, rBytes);
+        if (hRestore) {
+            void* rPtr = GlobalLock(hRestore);
+            if (rPtr) {
+                std::memcpy(rPtr, savedClipboard.c_str(), rBytes);
+                GlobalUnlock(hRestore);
+            }
+            SetClipboardData(CF_UNICODETEXT, hRestore);
+        }
+        CloseClipboard();
+    }
 }
 
 void InjectText(const std::wstring& text)
 {
     if (text.empty()) return;
-
-    // Fall back to clipboard for long strings or text containing emoji.
-    if (text.length() > 200 || ContainsSurrogates(text)) {
-        InjectViaClipboard(text);
-        return;
-    }
-
-    std::vector<INPUT> inputs;
-    inputs.reserve(text.size() * 2);
-
-    for (wchar_t ch : text) {
-        INPUT inp      = {};
-        inp.type       = INPUT_KEYBOARD;
-        inp.ki.wScan   = ch;
-        inp.ki.dwFlags = KEYEVENTF_UNICODE;
-        inputs.push_back(inp);
-
-        inp.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
-        inputs.push_back(inp);
-    }
-
-    SendInput(static_cast<UINT>(inputs.size()), inputs.data(), sizeof(INPUT));
+    // Always use clipboard injection — universally compatible (WhisperFlow approach)
+    InjectViaClipboard(text);
 }

@@ -11,7 +11,7 @@ struct AppSettings {
     std::string model            = "tiny.en";
     bool        useGPU           = true;
     bool        startWithWindows = true;
-    int         idleUnloadSec    = 60;
+    int         idleUnloadSec    = 120;   // keep model warm longer
     std::unordered_map<std::string, std::string> snippets = {
         { "insert email",     "you@yourdomain.com" },
         { "insert todo",      "// TODO: " },
