@@ -37,5 +37,5 @@ private:
     SampleCallback m_callback;
     std::atomic<int>   m_dropped{0};
     std::atomic<float> m_rms{0.0f};
-    std::vector<float> m_recordBuffer;    // pre-allocated, 30 s max at 16 kHz
+    std::vector<float> m_recordBuffer;    // pre-allocated, 15 s max at 16 kHz
 };
