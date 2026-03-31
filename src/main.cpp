@@ -16,6 +16,9 @@
 #include <string>
 #include <chrono>
 #include <vector>
+#include <algorithm>
+#include <cctype>
+#include <cmath>
 
 #include "audio_manager.h"
 #include "transcriber.h"
@@ -72,6 +75,15 @@ static std::atomic<bool>     g_recordingActive{false};
 static bool                  g_hotkeyDown   = false;
 static bool                  g_altHotkeyFallback = false; // true = using Alt+Shift+V
 static std::atomic<uint64_t> g_idleUnloadMs{120000};  // 120 s default — keep model warm
+static float                 g_vadNoiseFloor = 0.004f;
+static int                   g_vadSilentFrames = 0;
+static int                   g_vadSpeechFrames = 0;
+
+struct RecentTranscript {
+    std::string normalized;
+    uint64_t tick = 0;
+};
+static RecentTranscript g_recentTranscript;
 
 // Timing: used to measure transcription latency for the history entry
 static std::chrono::steady_clock::time_point g_recordStart;
@@ -100,6 +112,55 @@ static uint64_t ClampIdleUnloadMs(int sec)
     if (sec < 15) sec = 15;
     if (sec > 600) sec = 600;
     return static_cast<uint64_t>(sec) * 1000ULL;
+}
+
+static std::string NormalizeForDedup(const std::string& text)
+{
+    std::string out;
+    out.reserve(text.size());
+
+    bool prevSpace = true;
+    for (unsigned char ch : text) {
+        if (std::isalnum(ch)) {
+            out.push_back(static_cast<char>(std::tolower(ch)));
+            prevSpace = false;
+        } else if (!prevSpace) {
+            out.push_back(' ');
+            prevSpace = true;
+        }
+    }
+
+    while (!out.empty() && out.back() == ' ') out.pop_back();
+    return out;
+}
+
+static bool IsLikelyDuplicateText(const std::string& a, const std::string& b)
+{
+    if (a.empty() || b.empty()) return false;
+    if (a == b) return true;
+
+    const size_t minLen = std::min(a.size(), b.size());
+    const size_t maxLen = std::max(a.size(), b.size());
+    if (minLen < 8) return false;
+
+    if (maxLen - minLen <= 2) {
+        size_t diff = 0;
+        for (size_t i = 0; i < minLen; ++i) {
+            if (a[i] != b[i]) {
+                ++diff;
+                if (diff > 2) break;
+            }
+        }
+        if (diff <= 2) return true;
+    }
+
+    const std::string& shorter = (a.size() < b.size()) ? a : b;
+    const std::string& longer  = (a.size() < b.size()) ? b : a;
+    if (longer.find(shorter) != std::string::npos) {
+        return static_cast<double>(shorter.size()) / static_cast<double>(longer.size()) >= 0.85;
+    }
+
+    return false;
 }
 
 // ------------------------------------------------------------------
@@ -245,6 +306,9 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             SetTrayIcon(IDI_RECORDING_ICON, L"FLOW-ON! \u2014 Recording\u2026");
             g_audio.startCapture();
 
+            g_vadSilentFrames = 0;
+            g_vadSpeechFrames = 0;
+
             SetTimer(hwnd, TIMER_ID_KEYCHECK, 30, nullptr);  // 30 ms poll
         }
         return 0;
@@ -265,20 +329,34 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 g_hotkeyDown = false;
                 StopRecordingOnce(hwnd);
             }
-            // VAD: auto-stop after 2 s of silence (RMS below threshold)
+            // Adaptive VAD: estimate local noise floor and only auto-stop
+            // once real speech has occurred and then tailed off.
             else {
-                static int silentFrames = 0;
                 const float rms = g_audio.getRMS();
-                if (rms < 0.008f) {
-                    silentFrames++;
-                    // 2000ms / 30ms per poll = ~67 consecutive silent polls
-                    if (silentFrames > 67) {
-                        silentFrames = 0;
-                        g_hotkeyDown = false;
-                        StopRecordingOnce(hwnd);
-                    }
+
+                g_vadNoiseFloor = std::max(0.0015f, g_vadNoiseFloor * 0.98f + rms * 0.02f);
+
+                const float speechThreshold  = std::max(0.0065f, g_vadNoiseFloor * 2.4f);
+                const float silenceThreshold = std::max(0.0045f, g_vadNoiseFloor * 1.5f);
+
+                if (rms >= speechThreshold) {
+                    g_vadSpeechFrames++;
+                    g_vadSilentFrames = 0;
                 } else {
-                    silentFrames = 0;
+                    if (g_vadSpeechFrames >= 4 && rms <= silenceThreshold) {
+                        g_vadSilentFrames++;
+                    } else if (g_vadSpeechFrames == 0) {
+                        // Before first speech frame, keep adapting quickly to ambient noise.
+                        g_vadNoiseFloor = std::max(0.0015f, g_vadNoiseFloor * 0.9f + rms * 0.1f);
+                    }
+                }
+
+                // 1500ms / 30ms per poll = ~50 consecutive silent polls.
+                if (g_vadSpeechFrames >= 4 && g_vadSilentFrames > 50) {
+                    g_vadSilentFrames = 0;
+                    g_vadSpeechFrames = 0;
+                    g_hotkeyDown = false;
+                    StopRecordingOnce(hwnd);
                 }
             }
         }
@@ -322,10 +400,22 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         const bool tooShort  = pcm.size() < 2400;   // 0.15 s at 16 kHz
         const bool tooDroppy = dropped > 160;   // >10 ms gap = noticeable corruption
 
-        if (tooShort || tooDroppy) {
+        size_t voicedSamples = 0;
+        const float voicedThreshold = std::max(0.0065f, g_vadNoiseFloor * 2.0f);
+        for (float s : pcm) {
+            if (std::fabs(s) >= voicedThreshold) {
+                ++voicedSamples;
+            }
+        }
+        const bool mostlySilence = pcm.empty() ||
+            (static_cast<double>(voicedSamples) / static_cast<double>(pcm.size()) < 0.015);
+
+        if (tooShort || tooDroppy || mostlySilence) {
             wchar_t tip[128];
             if (tooShort)
                 wcscpy_s(tip, L"FLOW-ON! \u2014 Too short, try again");
+            else if (mostlySilence)
+                wcscpy_s(tip, L"FLOW-ON! \u2014 No clear speech detected");
             else
                 swprintf_s(tip, L"FLOW-ON! \u2014 Audio capture error (%d drops)", dropped);
             g_overlay.setState(OverlayState::Error);
@@ -349,19 +439,7 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     // Use a static to prevent duplicate processing of the same message
     // ----------------------------------------------------------
     case WM_TRANSCRIPTION_DONE: {
-        static std::atomic<uint64_t> s_lastProcessedTime{0};
         const uint64_t tickNow = GetTickCount64();
-        const uint64_t last = s_lastProcessedTime.load(std::memory_order_acquire);
-        
-        // Ignore duplicate messages within 500ms (shouldn't happen but guard anyway)
-        if (tickNow - last < 500) {
-            OutputDebugStringA("FLOW-ON: Ignoring duplicate WM_TRANSCRIPTION_DONE within 500ms\n");
-            auto* rawPtr = reinterpret_cast<std::string*>(lp);
-            delete rawPtr;  // must still delete to avoid leak
-            break;
-        }
-        s_lastProcessedTime.store(tickNow, std::memory_order_release);
-        
         auto* rawPtr = reinterpret_cast<std::string*>(lp);
         std::string raw = rawPtr ? *rawPtr : "";
         delete rawPtr;
@@ -375,6 +453,20 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
         std::string formatted = FormatTranscription(raw, mode);
         formatted = g_snippets.apply(formatted);
+
+        const std::string normalized = NormalizeForDedup(formatted);
+        const bool duplicateRecent =
+            !normalized.empty() &&
+            (tickNow - g_recentTranscript.tick) < 12000 &&
+            IsLikelyDuplicateText(normalized, g_recentTranscript.normalized);
+
+        if (duplicateRecent) {
+            OutputDebugStringA("FLOW-ON: Suppressed duplicate transcription chunk\n");
+            g_overlay.setState(OverlayState::Done);
+            g_state.store(AppState::IDLE, std::memory_order_release);
+            SetTrayIcon(IDI_IDLE_ICON, L"FLOW-ON! \u2014 Idle (Alt+V to record)");
+            break;
+        }
 
         OutputDebugStringA(("FLOW-ON FMT: " + formatted + "\n").c_str());
 
@@ -394,6 +486,9 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             }
             g_state.store(AppState::INJECTING, std::memory_order_release);
             InjectText(wide);
+
+            g_recentTranscript.normalized = normalized;
+            g_recentTranscript.tick = tickNow;
         }
 
         g_overlay.setState(OverlayState::Done);
@@ -401,30 +496,32 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         SetTrayIcon(IDI_IDLE_ICON, L"FLOW-ON! \u2014 Idle (Alt+V to record)");
 
         // Record in dashboard history
-        TranscriptionEntry entry;
-        entry.text      = formatted;
-        entry.latencyMs = latMs;
-        entry.wasCoded  = (mode == AppMode::CODING);
-        {
-            // Build timestamp "HH:MM"
-            SYSTEMTIME st; GetLocalTime(&st);
-            wchar_t ts[8];
-            swprintf_s(ts, L"%02d:%02d", st.wHour, st.wMinute);
-            entry.timestamp = std::string(ts, ts + 5);
-        }
-        // Count words
-        entry.wordCount = 0;
-        bool inWord = false;
-        for (char c : formatted) {
-            if (std::isspace(static_cast<unsigned char>(c))) {
-                if (inWord) entry.wordCount++;
-                inWord = false;
-            } else {
-                inWord = true;
+        if (!formatted.empty()) {
+            TranscriptionEntry entry;
+            entry.text      = formatted;
+            entry.latencyMs = latMs;
+            entry.wasCoded  = (mode == AppMode::CODING);
+            {
+                // Build timestamp "HH:MM"
+                SYSTEMTIME st; GetLocalTime(&st);
+                wchar_t ts[8];
+                swprintf_s(ts, L"%02d:%02d", st.wHour, st.wMinute);
+                entry.timestamp = std::string(ts, ts + 5);
             }
+            // Count words
+            entry.wordCount = 0;
+            bool inWord = false;
+            for (char c : formatted) {
+                if (std::isspace(static_cast<unsigned char>(c))) {
+                    if (inWord) entry.wordCount++;
+                    inWord = false;
+                } else {
+                    inWord = true;
+                }
+            }
+            if (inWord) entry.wordCount++;
+            g_dashboard.addEntry(entry);
         }
-        if (inWord) entry.wordCount++;
-        g_dashboard.addEntry(entry);
 
         OutputDebugStringA(("FLOW-ON LATENCY: " + std::to_string(latMs) + " ms\n").c_str());
         break;

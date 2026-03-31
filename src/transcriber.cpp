@@ -7,8 +7,68 @@
 #include <string>
 #include <sstream>
 #include <vector>
+#include <cctype>
 #include <windows.h>
 #include <cstdio>
+
+static bool ieq(char a, char b)
+{
+    return std::tolower(static_cast<unsigned char>(a))
+        == std::tolower(static_cast<unsigned char>(b));
+}
+
+static std::string normalizeCompact(const std::string& s)
+{
+    std::string out;
+    out.reserve(s.size());
+    for (unsigned char c : s) {
+        if (std::isalnum(c)) {
+            out.push_back(static_cast<char>(std::tolower(c)));
+        }
+    }
+    return out;
+}
+
+static void appendSegmentDedup(std::string& base, const std::string& seg)
+{
+    if (seg.empty()) return;
+    if (base.empty()) {
+        base = seg;
+        return;
+    }
+
+    const std::string normBase = normalizeCompact(base);
+    const std::string normSeg  = normalizeCompact(seg);
+    if (!normSeg.empty() && normSeg == normBase) {
+        return;
+    }
+
+    const size_t maxOverlap = std::min<size_t>({base.size(), seg.size(), 96});
+    size_t best = 0;
+
+    for (size_t k = maxOverlap; k >= 4; --k) {
+        bool match = true;
+        for (size_t i = 0; i < k; ++i) {
+            if (!ieq(base[base.size() - k + i], seg[i])) {
+                match = false;
+                break;
+            }
+        }
+        if (match) {
+            best = k;
+            break;
+        }
+        if (k == 4) break;
+    }
+
+    const bool hasTail = best < seg.size();
+    if (hasTail && !base.empty() && base.back() != ' ' && seg[best] != ' ') {
+        base.push_back(' ');
+    }
+    if (hasTail) {
+        base.append(seg.substr(best));
+    }
+}
 
 // ------------------------------------------------------------------
 // Remove hallucinated repetitions from Whisper output.
@@ -333,8 +393,10 @@ bool Transcriber::transcribeAsync(HWND hwnd, std::vector<float> pcm, UINT doneMs
         p.suppress_blank = true;
         p.suppress_nst   = true;    // suppress non-speech tokens
 
-        // -- Token limit for short dictation (cap output, speeds up decode) --
-        p.max_tokens = 64;  // short dictation cap — faster decode
+        // Balance speed and accuracy by allowing more output on longer utterances.
+        if      (durationSec < 4.0f)  p.max_tokens = 72;
+        else if (durationSec < 10.0f) p.max_tokens = 128;
+        else                          p.max_tokens = 196;
 
         // -- No initial prompt (saves token encoding overhead) --
         p.initial_prompt = nullptr;
@@ -342,31 +404,43 @@ bool Transcriber::transcribeAsync(HWND hwnd, std::vector<float> pcm, UINT doneMs
         // ============================================================
         // 3. Run inference
         // ============================================================
-        whisper_full(ctx, p, pcm.data(), static_cast<int>(pcm.size()));
+        const int whisperErr = whisper_full(ctx, p, pcm.data(), static_cast<int>(pcm.size()));
+        if (whisperErr != 0) {
+            char debugBuf[96];
+            snprintf(debugBuf, sizeof(debugBuf),
+                "FLOW-ON: whisper_full failed with code %d\n", whisperErr);
+            OutputDebugStringA(debugBuf);
+
+            m_lastUseMs.store(GetTickCount64(), std::memory_order_release);
+            m_busy.store(false, std::memory_order_release);
+
+            auto* s = new std::string("");
+            PostMessage(hwnd, doneMsg, 0, reinterpret_cast<LPARAM>(s));
+            return;
+        }
 
         // ============================================================
-        // 4. Collect result — only take FIRST segment due to single_segment=true
-        //    If multiple segments exist (whisper.cpp bug?), deduplicate them.
+        // 4. Collect result and merge overlapping segments conservatively.
         // ============================================================
         std::string result;
         const int nSeg = whisper_full_n_segments(ctx);
-        
-        if (nSeg > 0) {
-            // Take only the first segment text
-            const char* firstSeg = whisper_full_get_segment_text(ctx, 0);
-            result = firstSeg ? firstSeg : "";
-            
-            // Log if we got unexpected multiple segments
-            if (nSeg > 1) {
+
+        for (int i = 0; i < nSeg; ++i) {
+            const char* segText = whisper_full_get_segment_text(ctx, i);
+            if (!segText || !*segText) continue;
+
+            appendSegmentDedup(result, std::string(segText));
+
+            if (nSeg > 1 && i == 0) {
                 char debugBuf[128];
-                snprintf(debugBuf, sizeof(debugBuf), 
-                    "WHISPER BUG: Got %d segments despite single_segment=true, using only first\n", nSeg);
+                snprintf(debugBuf, sizeof(debugBuf),
+                    "FLOW-ON: merging %d whisper segments\n", nSeg);
                 OutputDebugStringA(debugBuf);
             }
         }
 
-        // Safety net: remove hallucinated repetitions (catch shorter loops too)
-        if (result.size() > 80) {
+        // Safety net: remove hallucinated repetitions, including short loops.
+        if (!result.empty()) {
             const std::string deduped = removeRepetitions(result);
             if (deduped != result) {
                 OutputDebugStringA(("FLOW-ON: collapsed repetition: [" + result + "] -> [" + deduped + "]\n").c_str());
